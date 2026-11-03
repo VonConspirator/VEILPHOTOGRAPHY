@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Veil</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- first run: create the owner account -->
+  <main id="screen-setup" class="card-screen" hidden>
+    <form class="card" id="form-setup">
+      <h1>Welcome to Veil</h1>
+      <p>Create the owner account for this computer. Everything stays on this machine.</p>
+      <label>Username <input name="username" autocomplete="username" required maxlength="40"></label>
+      <label>Password <input name="password" type="password" autocomplete="new-password" required minlength="8"></label>
+      <p class="hint">At least 8 characters.</p>
+      <p class="error" role="alert"></p>
+      <button class="primary" type="submit">Create account</button>
+    </form>
+  </main>
+
+  <main id="screen-login" class="card-screen" hidden>
+    <form class="card" id="form-login">
+      <h1>Veil</h1>
+      <label>Username <input name="username" autocomplete="username" required></label>
+      <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+      <p class="error" role="alert"></p>
+      <button class="primary" type="submit">Log in</button>
+    </form>
+  </main>
+
+  <main id="screen-notice" class="card-screen" hidden>
+    <div class="card">
+      <h1>Before you start</h1>
+      <p>Veil is for editing photographs of <strong>consenting adults</strong>. By continuing you confirm that every person
+         in the photos you edit is an adult and has agreed to be photographed and to have the photos edited.</p>
+      <p>Veil never swaps in a face taken from another picture. Your photos stay on this computer.</p>
+      <p class="error" role="alert"></p>
+      <button class="primary" id="btn-ack">I confirm</button>
+    </div>
+  </main>
+
+  <!-- the editor -->
+  <div id="screen-app" hidden>
+    <header class="topbar">
+      <strong class="brand">Veil</strong>
+      <button id="btn-library" title="Your photos">Photos</button>
+      <span class="sp"></span>
+      <button id="btn-undo" title="Undo (Ctrl+Z)" disabled>Undo</button>
+      <button id="btn-redo" title="Redo (Ctrl+Shift+Z)" disabled>Redo</button>
+      <button id="btn-compare" title="Before / after" aria-pressed="false" disabled>Before / after</button>
+      <button id="btn-export" class="primary" disabled>Export</button>
+      <button id="btn-logout">Log out</button>
+    </header>
+
+    <div class="workspace">
+      <nav class="tools" aria-label="Tools">
+        <button data-tool="view" class="on" title="Just look">View</button>
+        <button data-tool="point" title="Click to mark a spot">Point</button>
+        <button data-tool="brush" title="Paint over an area">Brush</button>
+        <button data-tool="box" title="Draw a box around an area">Box</button>
+        <button data-tool="crop" title="Crop the photo">Crop</button>
+      </nav>
+
+      <section class="stage" id="stage">
+        <div id="empty" class="empty">
+          <p>Drop a photo here, or</p>
+          <button class="primary" id="btn-open">Choose a photo</button>
+        </div>
+        <div id="frame" hidden>
+          <img id="img-after" alt="Your photo" draggable="false">
+          <div id="before-clip"><img id="img-before" alt="Original photo" draggable="false"></div>
+          <div id="divider" hidden><span></span></div>
+          <canvas id="overlay"></canvas>
+        </div>
+        <div id="zoombar" hidden role="group" aria-label="Zoom">
+          <button id="zoom-out" aria-label="Zoom out" title="Zoom out (-)">−</button>
+          <output id="zoom-pct">100%</output>
+          <button id="zoom-in" aria-label="Zoom in" title="Zoom in (+)">+</button>
+          <button id="zoom-fit" title="Fit to window (0)">Fit</button>
+          <button id="zoom-100" title="One photo pixel per screen pixel">100%</button>
+        </div>
+        <p id="toast" role="status" hidden></p>
+      </section>
+
+      <aside class="panel">
+        <div id="tool-options"></div>
+
+        <section>
+          <h2>Adjust <span id="adjust-scope" class="hint"></span></h2>
+          <div id="sliders"></div>
+          <div class="row">
+            <button id="btn-adjust-apply" class="primary" disabled>Apply</button>
+            <button id="btn-adjust-reset" disabled>Reset</button>
+          </div>
+        </section>
+
+        <section>
+          <h2>Rotate and flip</h2>
+          <div class="row wrap">
+            <button id="btn-rot-left">⟲ 90°</button>
+            <button id="btn-rot-right">⟳ 90°</button>
+            <button id="btn-flip-h">Flip ↔</button>
+            <button id="btn-flip-v">Flip ↕</button>
+          </div>
+          <label class="slider">Straighten <output id="out-straighten">0.0°</output>
+            <input id="straighten" type="range" min="-15" max="15" step="0.1" value="0"></label>
+          <button id="btn-straighten" disabled>Apply straighten</button>
+        </section>
+
+        <section>
+          <h2>History</h2>
+          <ol id="history" class="history"></ol>
+        </section>
+      </aside>
+    </div>
+
+    <aside id="library" class="drawer" hidden aria-label="Your photos">
+      <div class="drawer-head"><h2>Your photos</h2><button id="btn-library-close">Close</button></div>
+      <button class="primary" id="btn-open2">Add a photo</button>
+      <div id="library-grid" class="grid"></div>
+    </aside>
+
+    <div id="export-dialog" class="modal" hidden>
+      <div class="card">
+        <h2>Export</h2>
+        <label>Format
+          <select id="export-format"><option value="jpeg">JPEG</option><option value="png">PNG</option><option value="webp">WebP</option></select>
+        </label>
+        <label class="slider">Quality <output id="out-quality">92</output>
+          <input id="export-quality" type="range" min="50" max="100" value="92"></label>
+        <p class="hint">Location, camera and other hidden details are removed from the exported file. Colours are kept.</p>
+        <div class="row"><button class="primary" id="btn-export-go">Save file</button><button id="btn-export-cancel">Cancel</button></div>
+      </div>
+    </div>
+  </div>
+  <input type="file" id="file-input" accept="image/jpeg,image/png,image/webp,image/tiff" hidden>
+  <script src="app.js"></script>
+</body>
+</html>

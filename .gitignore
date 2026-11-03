@@ -1,0 +1,41 @@
+# Photos, models and personal data never go into git
+data/
+photos/
+models/
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+*.onnx
+*.gguf
+*.bin
+# Common image/video formats (screenshots for the README go in docs/screenshots/ and are re-included below)
+*.jpg
+*.jpeg
+*.png
+*.webp
+*.tif
+*.tiff
+*.heic
+*.raw
+*.cr2
+*.cr3
+*.nef
+*.arw
+*.dng
+*.mp4
+*.mov
+!docs/screenshots/
+!docs/screenshots/*
+# Secrets and local config
+.env
+*.key
+*.pem
+secrets/
+# Python / tooling
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+node_modules/
