@@ -3,7 +3,7 @@
 A local, private, browser-based photo editor for professional boudoir and portrait
 photographers, and the models they work with. Photos stay on your machine. No telemetry.
 
-> Work in progress: phase 6 of 9. Screenshots, setup steps and hardware
+> Work in progress: phase 7 of 9. Screenshots, setup steps and hardware
 > requirements land with the later phases.
 
 Veil is for photographs of consenting adults. It never swaps in a face from an
@@ -80,6 +80,25 @@ medical advice or interpret medical results; or for law-enforcement, justice or 
 Read the full text: https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/main/LICENSE.md
 (this inpainting model carries the same `openrail++` license). The editor for consenting adults only is
 Veil's own rule on top of that.
+
+### Watermarks and fonts
+
+| Item | Used for | Download | License |
+|---|---|---|---|
+| Inter (variable font, google/fonts `ofl/inter` @ `0b58fb37`) | text watermarks | 0.9 MB, bundled with Veil (`backend/veil/assets/fonts`) | SIL Open Font License 1.1 |
+
+The font and its license text (`Inter-OFL.txt`) ship inside Veil. Its SHA-256 is pinned in the code and checked
+before it is used (`29160a80ff49ddcab2c97711247e08b1fab27a484a329ce8b813d820dc559031`). Inter draws Latin,
+Greek and Cyrillic letters, digits and common symbols; for anything else, use a logo.
+
+**How watermarks work.** Make presets with the **Watermarks** button (at the computer only): text (words, weight,
+colour, soft outline) or a logo (a PNG, JPEG or WebP you upload; SVG logos must be exported as PNG first),
+placed in one of nine spots or repeated across the photo, with size, strength, distance from the edge and tilt.
+A watermark is added **only when you export**, never to your working copy or its history. In the Export
+window tick "Add a watermark" and choose a preset. A paired phone can switch the watermark on or off and
+choose a saved preset, but presets can only be created, changed or deleted at the computer. Logos are stored as clean
+PNGs (no hidden details) in the data folder and are only ever drawn on exported copies; they are never given to a
+face or AI tool.
 
 License: MIT (Veil itself).
 

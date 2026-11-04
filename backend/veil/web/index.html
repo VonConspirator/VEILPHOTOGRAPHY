@@ -63,6 +63,7 @@
       <strong class="brand">Veil</strong>
       <button id="btn-library" title="Your photos">Photos</button>
       <button id="btn-phone" title="Use Veil from your phone">Phone <span id="phone-badge" class="badge" hidden>0</span></button>
+      <button id="btn-wm" title="Make and manage watermarks">Watermarks</button>
       <span class="sp"></span>
       <button id="btn-undo" title="Undo (Ctrl+Z)" disabled>Undo</button>
       <button id="btn-redo" title="Redo (Ctrl+Shift+Z)" disabled>Redo</button>
@@ -252,6 +253,41 @@
       </div>
     </div>
 
+    <div id="wm-dialog" class="modal" hidden>
+      <div class="card wide" role="dialog" aria-labelledby="wm-title">
+        <h2 id="wm-title">Watermarks</h2>
+        <p class="hint">A watermark is added only when you export. Make as many as you like (for example one for social media and one for proofs). On your phone you can switch one on or off and pick between these.</p>
+        <ul id="wm-list" class="devices"></ul>
+        <div class="row"><button id="btn-wm-new">New watermark</button></div>
+        <form id="wm-form" class="aiform" hidden autocomplete="off">
+          <label>Name <input name="name" maxlength="60" required placeholder="Social media"></label>
+          <label>Kind <select name="kind"><option value="text">Text</option><option value="logo">Logo (a picture)</option></select></label>
+          <div id="wm-text-fields" class="aiform">
+            <label>Words <textarea name="text" maxlength="200" rows="2" placeholder="© Your Studio 2026"></textarea></label>
+            <label>Weight <select name="weight"><option value="regular">Regular</option><option value="bold">Bold</option></select></label>
+            <label>Colour <input name="color" type="color" value="#ffffff"></label>
+            <label class="check"><input type="checkbox" name="outline"> Soft outline so it can be read on any picture</label>
+          </div>
+          <div id="wm-logo-fields" class="aiform" hidden>
+            <img id="wm-logo-img" alt="Your logo" hidden>
+            <label>Logo file (PNG, JPEG or WebP) <input type="file" id="wm-logo-file" accept="image/png,image/jpeg,image/webp"></label>
+            <p id="wm-logo-note" class="hint"></p>
+          </div>
+          <label>Place <select name="position"></select></label>
+          <label class="slider">Size (share of the photo width) <output data-for="size"></output><input name="size" type="range" min="2" max="80"></label>
+          <label class="slider">Strength (how solid it is) <output data-for="opacity"></output><input name="opacity" type="range" min="5" max="100"></label>
+          <label class="slider">Distance from the edge <output data-for="margin"></output><input name="margin" type="range" min="0" max="25"></label>
+          <label class="slider">Tilt (degrees) <output data-for="angle"></output><input name="angle" type="range" min="-90" max="90"></label>
+          <label class="slider" id="wm-spacing-row">Space between repeats <output data-for="spacing"></output><input name="spacing" type="range" min="0" max="400"></label>
+          <label class="check"><input type="checkbox" id="wm-default"> Switch this one on by default when exporting</label>
+          <div class="row wrap"><button class="primary" type="submit">Save</button><button type="button" id="btn-wm-preview">Preview on the open photo</button><button type="button" id="btn-wm-delete">Delete</button></div>
+          <img id="wm-preview" alt="Preview of the watermark on your photo" hidden>
+        </form>
+        <p id="wm-error" class="error" role="alert"></p>
+        <div class="row"><button id="btn-wm-close">Close</button></div>
+      </div>
+    </div>
+
     <div id="ai-dialog" class="modal" hidden>
       <div class="card wide" role="dialog" aria-labelledby="ai-title">
         <h2 id="ai-title">Language model</h2>
@@ -290,7 +326,13 @@
         </label>
         <label class="slider">Quality <output id="out-quality">92</output>
           <input id="export-quality" type="range" min="50" max="100" value="92"></label>
-        <p class="hint">Location, camera and other hidden details are removed from the exported file. Colours are kept.</p>
+        <h3>Watermark</h3>
+        <label class="check"><input type="checkbox" id="export-wm-on"> Add a watermark to the exported file</label>
+        <label id="export-wm-pick" hidden>Which one <select id="export-wm-preset"></select></label>
+        <p id="export-wm-note" class="hint"></p>
+        <div class="row wrap"><button id="btn-export-wm-preview" hidden>Preview with watermark</button><button id="btn-export-wm-manage" hidden>Make or change watermarks</button></div>
+        <img id="export-wm-img" alt="Preview of the exported photo with the watermark" hidden>
+        <p class="hint">The watermark is only added to the file you save. Your photo and its history stay clean. Location, camera and other hidden details are removed from the exported file. Colours are kept.</p>
         <div class="row"><button class="primary" id="btn-export-go">Save file</button><button id="btn-export-cancel">Cancel</button></div>
       </div>
     </div>

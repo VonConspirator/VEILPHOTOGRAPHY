@@ -60,7 +60,7 @@ async function boot() {
   if (res.status === 403) { remote = true; return showUnpaired('Phone access is off', 'Phone access is switched off on your computer. Turn on "Allow phone access" in Veil\'s Phone window, then check again.', false); }
   const st = await res.json();
   remote = st.scope === 'remote';
-  $('#btn-phone').hidden = remote;
+  $('#btn-phone').hidden = remote; $('#btn-wm').hidden = remote;      // watermarks are made at the computer
   $('#btn-logout').textContent = remote ? 'Unpair this phone' : 'Log out';
   if (remote && !st.logged_in) {
     if (st.device_state === 'pending') {
@@ -604,20 +604,167 @@ function scheduleAdjustPreview() {
 $('#btn-adjust-apply').addEventListener('click', () => edit('adjust', { ...S.adj }, true));
 $('#btn-adjust-reset').addEventListener('click', () => { resetSliders(); setAfter(actualUrl()); refreshUI(); });
 
+// ---------------------------------------------------------------- watermarks (phase 7)
+// Presets are made at the computer. Everyone (phones too) can choose one or switch it off when exporting.
+// The watermark is added to the exported file only, never to the photo or its history.
+const WM = { presets: [], def: { on: false, preset: null }, fontOk: true, editing: null, pendingLogo: null, previewUrl: '', exportUrl: '' };
+const wmLocal = {
+  get(k) { try { return localStorage.getItem('veil.wm.' + k); } catch (_) { return null; } },
+  set(k, v) { try { localStorage.setItem('veil.wm.' + k, v); } catch (_) { /* private window: fine */ } },
+};
+const WM_POSITIONS = [['top-left', 'Top left'], ['top-center', 'Top centre'], ['top-right', 'Top right'], ['middle-left', 'Middle left'],
+  ['center', 'Centre'], ['middle-right', 'Middle right'], ['bottom-left', 'Bottom left'], ['bottom-center', 'Bottom centre'],
+  ['bottom-right', 'Bottom right'], ['tile', 'Repeated across the whole photo']];
+const putJSON = (path, body) => api(path, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+
+async function loadWatermarks() {
+  const d = await (await api('/api/watermarks')).json();
+  WM.presets = d.presets; WM.def = d.default; WM.fontOk = d.font_ok;
+}
+function showBlobIn(img, blob, key) {
+  if (WM[key]) URL.revokeObjectURL(WM[key]);
+  WM[key] = URL.createObjectURL(blob); img.src = WM[key]; img.hidden = false;
+}
+function renderExportWm() {
+  const has = WM.presets.length > 0, sel = $('#export-wm-preset'), on = $('#export-wm-on');
+  sel.replaceChildren();
+  for (const p of WM.presets) { const o = document.createElement('option'); o.value = p.id; o.textContent = p.name; sel.append(o); }
+  const savedOn = wmLocal.get('on'), savedPreset = wmLocal.get('preset');
+  const preset = WM.presets.some((p) => p.id === savedPreset) ? savedPreset : WM.def.preset || (has ? WM.presets[0].id : '');
+  sel.value = preset;
+  on.disabled = !has; on.checked = has && (savedOn === null ? WM.def.on : savedOn === '1');
+  $('#export-wm-pick').hidden = !has || !on.checked;
+  $('#btn-export-wm-preview').hidden = !has || !on.checked;
+  $('#btn-export-wm-manage').hidden = remote;
+  $('#export-wm-img').hidden = true;
+  $('#export-wm-note').textContent = has ? '' : remote ? 'No watermarks yet. Make one on your computer (Watermarks button at the top), then it appears here.' : 'No watermarks yet.';
+  if (!WM.fontOk) $('#export-wm-note').textContent = 'The watermark font is missing, so text watermarks cannot be drawn. Reinstall Veil.';
+}
+const exportWatermark = () => ($('#export-wm-on').checked && $('#export-wm-preset').value) || null;
+$('#export-wm-on').addEventListener('change', () => { wmLocal.set('on', $('#export-wm-on').checked ? '1' : '0'); renderExportWmToggles(); });
+$('#export-wm-preset').addEventListener('change', () => { wmLocal.set('preset', $('#export-wm-preset').value); $('#export-wm-img').hidden = true; });
+function renderExportWmToggles() {
+  const on = $('#export-wm-on').checked && !$('#export-wm-on').disabled;
+  $('#export-wm-pick').hidden = !on; $('#btn-export-wm-preview').hidden = !on; if (!on) $('#export-wm-img').hidden = true;
+}
+$('#btn-export-wm-preview').addEventListener('click', async () => {
+  try {
+    const res = await postJSON(`/api/photos/${S.photo.id}/watermark-preview`, { preset: exportWatermark() });
+    showBlobIn($('#export-wm-img'), await res.blob(), 'exportUrl');
+  } catch (ex) { fail(ex); }
+});
+$('#btn-export-wm-manage').addEventListener('click', () => { $('#export-dialog').hidden = true; openWatermarks(); });
+
 // ---------------------------------------------------------------- export
-$('#btn-export').addEventListener('click', () => { $('#export-dialog').hidden = false; });
+$('#btn-export').addEventListener('click', async () => {
+  $('#export-dialog').hidden = false;
+  try { await loadWatermarks(); } catch (ex) { WM.presets = []; fail(ex); }
+  renderExportWm();
+});
 $('#btn-export-cancel').addEventListener('click', () => { $('#export-dialog').hidden = true; });
 $('#export-quality').addEventListener('input', (e) => { $('#out-quality').textContent = e.target.value; });
 $('#btn-export-go').addEventListener('click', async () => {
-  const fmt = $('#export-format').value;
+  const fmt = $('#export-format').value, wm = exportWatermark();
   try {
-    const res = await postJSON(`/api/photos/${S.photo.id}/export`, { format: fmt, quality: Number($('#export-quality').value) });
+    const res = await postJSON(`/api/photos/${S.photo.id}/export`, { format: fmt, quality: Number($('#export-quality').value), ...(wm ? { watermark: wm } : {}) });
     const blob = await res.blob(); const a = document.createElement('a');
     const base = S.photo.name.replace(/\.[^.]+$/, '') || 'photo';
     a.href = URL.createObjectURL(blob); a.download = `${base}-veil.${fmt === 'jpeg' ? 'jpg' : fmt}`;
     document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
-    $('#export-dialog').hidden = true; toast('Exported. Hidden details were removed from the file.');
+    $('#export-dialog').hidden = true; toast(wm ? 'Exported with your watermark. Hidden details were removed from the file.' : 'Exported. Hidden details were removed from the file.');
   } catch (ex) { fail(ex); }
+});
+
+// ---------------------------------------------------------------- the watermark manager (owner, at the computer)
+const wmForm = () => $('#wm-form');
+const wmErr = (m) => { $('#wm-error').textContent = m || ''; };
+function wmField(name) { return wmForm().elements[name]; }
+function fillWmForm(p) {
+  const f = wmForm();
+  for (const k of ['name', 'kind', 'text', 'weight', 'color', 'position']) f.elements[k].value = p[k];
+  for (const k of ['size', 'opacity', 'margin', 'angle', 'spacing']) { f.elements[k].value = p[k]; wmOut(k); }
+  f.elements.outline.checked = !!p.outline;
+  $('#wm-default').checked = !!p.id && WM.def.on && WM.def.preset === p.id;
+  WM.pendingLogo = null; $('#wm-logo-file').value = '';
+  updateWmKind(p);
+  $('#wm-preview').hidden = true;
+  $('#btn-wm-delete').hidden = !p.id; $('#btn-wm-preview').disabled = !S.photo;
+  $('#btn-wm-preview').title = S.photo ? '' : 'Open a photo first to see it here.';
+}
+function wmOut(k) { const o = wmForm().querySelector(`output[data-for="${k}"]`); if (o) o.textContent = wmForm().elements[k].value + (k === 'angle' ? '°' : k === 'size' || k === 'opacity' || k === 'margin' || k === 'spacing' ? '%' : ''); }
+function updateWmKind(p = WM.editing && WM.editing !== 'new' ? WM.presets.find((x) => x.id === WM.editing) : null) {
+  const logo = wmForm().elements.kind.value === 'logo', tile = wmForm().elements.position.value === 'tile';
+  $('#wm-text-fields').hidden = logo; $('#wm-logo-fields').hidden = !logo;
+  $('#wm-spacing-row').hidden = !tile;
+  const img = $('#wm-logo-img');
+  if (logo && p && p.has_logo) { img.src = `/api/watermarks/${p.id}/logo?v=${Date.now()}`; img.hidden = false; $('#wm-logo-note').textContent = 'Choose a different file to replace it.'; }
+  else { img.hidden = true; img.removeAttribute('src'); $('#wm-logo-note').textContent = logo ? 'Choose the logo file, then press Save. A transparent PNG works best.' : ''; }
+}
+function renderWmList() {
+  const ul = $('#wm-list'); ul.replaceChildren();
+  if (!WM.presets.length) { const li = document.createElement('li'); li.textContent = 'No watermarks yet.'; ul.append(li); }
+  for (const p of WM.presets) {
+    const li = document.createElement('li'); if (p.id === WM.editing) li.className = 'sel';
+    const meta = document.createElement('div'); meta.className = 'meta';
+    const n = document.createElement('strong'); n.textContent = p.name;
+    const d = document.createElement('span'); d.textContent = (p.kind === 'logo' ? 'Logo' : `“${p.text.split('\n')[0].slice(0, 40)}”`) + (WM.def.on && WM.def.preset === p.id ? ' · on by default' : '');
+    meta.append(n, d);
+    const acts = document.createElement('div'); acts.className = 'acts';
+    const b = document.createElement('button'); b.textContent = 'Edit'; b.addEventListener('click', () => editWm(p.id));
+    acts.append(b); li.append(meta, acts); ul.append(li);
+  }
+}
+function editWm(id) {
+  WM.editing = id; wmErr('');
+  const blank = { id: '', name: '', kind: 'text', text: '', weight: 'regular', color: '#ffffff', opacity: 60, size: 25, position: 'bottom-right', margin: 3, angle: 0, spacing: 60, outline: true };
+  const p = id === 'new' ? blank : WM.presets.find((x) => x.id === id);
+  if (!p) return;
+  $('#wm-form').hidden = false; fillWmForm(p); renderWmList();
+}
+function wmFields() {
+  const f = wmForm().elements, out = {};
+  for (const k of ['name', 'kind', 'text', 'weight', 'color', 'position']) out[k] = f[k].value;
+  for (const k of ['size', 'opacity', 'margin', 'angle', 'spacing']) out[k] = Number(f[k].value);
+  out.outline = f.outline.checked;
+  return out;
+}
+async function openWatermarks() {
+  $('#wm-dialog').hidden = false; wmErr('');
+  const sel = wmForm().elements.position; if (!sel.options.length) for (const [v, l] of WM_POSITIONS) { const o = document.createElement('option'); o.value = v; o.textContent = l; sel.append(o); }
+  try { await loadWatermarks(); } catch (ex) { return wmErr(ex.message); }
+  WM.editing = null; $('#wm-form').hidden = true; renderWmList();
+  if (!WM.presets.length) editWm('new');
+}
+async function saveWm(ev) {
+  ev.preventDefault(); wmErr('');
+  try {
+    const fields = wmFields(), isNew = WM.editing === 'new';
+    const d = await (await (isNew ? postJSON('/api/watermarks', { fields }) : putJSON(`/api/watermarks/${WM.editing}`, { fields }))).json();
+    WM.editing = d.id;
+    if (WM.pendingLogo) { const fd = new FormData(); fd.append('file', WM.pendingLogo); await api(`/api/watermarks/${d.id}/logo`, { method: 'POST', body: fd }); WM.pendingLogo = null; }
+    const wantDefault = $('#wm-default').checked;
+    if (wantDefault) WM.def = await (await putJSON('/api/watermarks/default', { on: true, preset: d.id })).json();
+    else if (WM.def.preset === d.id) WM.def = await (await putJSON('/api/watermarks/default', { on: false, preset: d.id })).json();
+    await loadWatermarks(); renderWmList(); editWm(d.id); toast('Watermark saved.');
+  } catch (ex) { wmErr(ex.message); }
+}
+$('#btn-wm').addEventListener('click', openWatermarks);
+$('#btn-wm-close').addEventListener('click', () => { $('#wm-dialog').hidden = true; });
+$('#btn-wm-new').addEventListener('click', () => editWm('new'));
+$('#wm-form').addEventListener('submit', saveWm);
+$('#wm-form').addEventListener('input', (e) => { if (e.target.type === 'range') wmOut(e.target.name); if (e.target.name === 'kind' || e.target.name === 'position') updateWmKind(); });
+$('#wm-logo-file').addEventListener('change', (e) => { WM.pendingLogo = e.target.files[0] || null; if (WM.pendingLogo) $('#wm-logo-note').textContent = `${WM.pendingLogo.name} will be used when you press Save.`; });
+$('#btn-wm-delete').addEventListener('click', async () => {
+  if (!WM.editing || WM.editing === 'new') return;
+  try { await api(`/api/watermarks/${WM.editing}`, { method: 'DELETE' }); WM.editing = null; $('#wm-form').hidden = true; await loadWatermarks(); renderWmList(); toast('Watermark deleted.'); }
+  catch (ex) { wmErr(ex.message); }
+});
+$('#btn-wm-preview').addEventListener('click', async () => {
+  if (!S.photo) return; wmErr('');
+  try {
+    const draft = wmFields(); if (WM.editing && WM.editing !== 'new') draft.id = WM.editing;
+    showBlobIn($('#wm-preview'), await (await postJSON(`/api/photos/${S.photo.id}/watermark-preview`, { draft })).blob(), 'previewUrl');
+  } catch (ex) { wmErr(ex.message); }
 });
 
 // ---------------------------------------------------------------- phone pairing (owner, at the computer)
@@ -858,6 +1005,7 @@ async function runPlan(plan) {
   S.pending = null;
   const note = plan.asked && plan.asked.photo_sent ? ` (the photo was sent to ${plan.asked.provider})` : '';
   if (plan.action === 'none') return showReply((plan.reply || 'I could not turn that into an edit.') + note);
+  if (plan.action === 'watermark') return showReply('Watermarks are added when you export, so your photo stays clean while you edit. Click Export, tick "Add a watermark" and pick one. Make or change them with the Watermarks button at the top (on the computer). Nothing was changed.');
   if (!plan.available) return showReply(`I understood: ${plan.label}. That tool is not built yet; it arrives in a later phase. Nothing was changed.`);
   const finish = (ok) => showReply(ok ? `Done: ${plan.label}. Undo (Ctrl+Z) takes it back.` + note : `Could not do: ${plan.label}. Nothing was changed.`, !ok);
   const done = async (op, params, withMask) => {

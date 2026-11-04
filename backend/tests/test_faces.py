@@ -67,7 +67,9 @@ def test_no_face_route_accepts_a_picture(v):
         if dep is None:
             continue
         files = [p for p in dep.body_params if getattr(p, "type_", None) is UploadFile or "File" in repr(getattr(p, "field_info", ""))]
-        if path.endswith("/api/photos") and "POST" in getattr(route, "methods", ()):      # the one upload route
+        if path.endswith("/api/photos") and "POST" in getattr(route, "methods", ()):      # the photo upload route
+            continue
+        if path == "/api/watermarks/{pid}/logo":       # the owner's own logo for a watermark; test_watermark proves it never reaches a face tool
             continue
         assert not files, f"{path} accepts a file"
     r = v.c.post(f"/api/photos/{v.pid}/faces", files={"file": ("x.png", png_bytes(), "image/png")})
@@ -187,7 +189,7 @@ def test_a_plan_can_never_carry_faces_or_images_from_the_model():
 
 
 def test_no_action_is_left_half_built():
-    assert [n for n, a in actions.ACTIONS.items() if not a["available"]] == ["watermark"]      # phase 7
+    assert [n for n, a in actions.ACTIONS.items() if not a["available"]] == ["watermark"]      # the watermark is added at export, not by the command bar
 
 
 # ---------------------------------------------------------------- the model registry

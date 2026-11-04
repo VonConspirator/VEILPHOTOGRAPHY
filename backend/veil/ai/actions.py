@@ -10,7 +10,7 @@ ASPECTS = ("free", "orig", "1:1", "4:5", "5:4", "3:2", "2:3", "16:9")
 # region: "none" = whole photo, "optional" = whole photo unless the user marks an area,
 #         "required" = Veil must ask where (brush or box) before it can apply,
 #         "faces" = Veil finds the faces and the owner ticks which ones (a face is only ever edited from this photo).
-# available: False = understood, but the tool arrives in a later phase.
+# available: False = understood, but not something the command bar runs (the watermark is added when the photo is exported).
 ACTIONS: dict[str, dict] = {
     "adjust":    {"label": "Adjust", "region": "optional", "available": True,
                   "about": "Change brightness, contrast, saturation, warmth or sharpness (each -100..100)."},
@@ -61,7 +61,7 @@ ACTIONS: dict[str, dict] = {
     "blur_background":  {"label": "Blur the background", "region": "none", "available": True,
                          "about": "Soften the background. amount: 0..100."},
     "watermark":        {"label": "Add a watermark", "region": "none", "available": False,
-                         "about": "Add a text or logo watermark. text: the words."},
+                         "about": "Add a text or logo watermark. text: the words. (Veil adds watermarks when the photo is exported.)"},
 }
 
 

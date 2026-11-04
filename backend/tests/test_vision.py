@@ -185,7 +185,7 @@ def test_new_tools_are_available_actions_and_background_colours_are_cleaned():
     from veil.ai import parser
     for a in ("remove_tattoo", "remove_object", "remove_background", "blur_background", "replace_background"):
         assert parser.validate({"action": a, "params": {}})["available"] is True
-    assert parser.validate({"action": "watermark", "params": {"text": "x"}})["available"] is False      # the watermark is phase 7
+    assert parser.validate({"action": "watermark", "params": {"text": "x"}})["available"] is False      # the watermark is added at export, not by the command bar
     p = parser.validate({"action": "replace_background", "params": {"color": "Beige"}})["params"]
     assert p == {"color": "#d8c3a5"}
     assert parser.validate({"action": "replace_background", "params": {"color": "javascript:alert(1)"}})["params"] == {"color": "#ffffff"}

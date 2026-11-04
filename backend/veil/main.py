@@ -23,6 +23,8 @@ from .tools import ops
 from .vision import ops as vision_ops
 from .vision import routes as vision_routes
 from .vision.engine import Engine
+from .watermark import WatermarkStore
+from . import watermark_routes
 
 WEB_DIR = Path(__file__).parent / "web"
 CSP = ("default-src 'self'; img-src 'self' blob: data:; style-src 'self'; script-src 'self'; "
@@ -61,6 +63,7 @@ class GotoRequest(BaseModel):
 class ExportRequest(BaseModel):
     format: str = "jpeg"
     quality: int = 92
+    watermark: str | None = None   # a saved watermark preset to draw on the exported copy (never on the saved versions)
 
 
 def create_app(data_dir: Path | None = None, tailscale: Tailscale | None = None, vision: Engine | None = None) -> FastAPI:
@@ -69,6 +72,7 @@ def create_app(data_dir: Path | None = None, tailscale: Tailscale | None = None,
     auth = AuthStore(data_dir)
     photos = PhotoStore(data_dir)
     phones = PhoneStore(data_dir)
+    watermarks = WatermarkStore(data_dir)
     tailscale = tailscale or Tailscale()
     engine = vision or Engine(config.default_models_dir())
     hosts = config.allowed_hosts()
@@ -315,7 +319,8 @@ def create_app(data_dir: Path | None = None, tailscale: Tailscale | None = None,
 
     @app.post("/api/photos/{photo_id}/export", dependencies=[Depends(require_ready)])
     def export(photo_id: str, req: ExportRequest):
-        body, mime = photo_call(photos.export, photo_id, req.format, req.quality)
+        overlay = watermark_routes.export_overlay(watermarks, req.watermark) if req.watermark else None
+        body, mime = photo_call(photos.export, photo_id, req.format, req.quality, overlay)
         name = Path(photos.get(photo_id)["name"]).stem or "photo"
         ext = "jpg" if req.format.lower() == "jpeg" else req.format.lower()
         return Response(body, media_type=mime,
@@ -326,6 +331,7 @@ def create_app(data_dir: Path | None = None, tailscale: Tailscale | None = None,
         photo_call(photos.delete, photo_id)
         return {"ok": True}
 
+    watermark_routes.register(app, store=watermarks, photos=photos, small_jpeg=_small_jpeg, require_ready=require_ready, require_owner=require_owner)
     vision_routes.register(app, engine=engine, photos=photos, require_ready=require_ready, require_owner=require_owner)
     ai_settings = AISettings(data_dir)
     ai_routes.register(app, settings=ai_settings, photos=photos, small_jpeg=_small_jpeg,

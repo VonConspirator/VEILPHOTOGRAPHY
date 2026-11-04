@@ -28,7 +28,7 @@ dev = ["pytest>=8"]
 where = ["backend"]
 
 [tool.setuptools.package-data]
-veil = ["web/*"]
+veil = ["web/*", "assets/fonts/*"]
 "veil.vision.vendor" = ["LICENSE-BiRefNet"]
 
 [tool.pytest.ini_options]

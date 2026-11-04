@@ -193,9 +193,10 @@ class PhotoStore:
             shutil.rmtree(self._dir(photo_id))
 
     # ------------------------------------------------------------ export
-    def export(self, photo_id: str, fmt: str = "jpeg", quality: int = 92) -> tuple[bytes, str]:
+    def export(self, photo_id: str, fmt: str = "jpeg", quality: int = 92, overlay=None) -> tuple[bytes, str]:
         """Exports the current version with all metadata removed (EXIF, GPS, XMP, text chunks).
-        Only the pixels and the colour profile are kept, so colours still look right."""
+        Only the pixels and the colour profile are kept, so colours still look right.
+        `overlay`, if given, draws on the exported copy only (the watermark); the saved versions are never touched."""
         fmt = (fmt or "jpeg").lower()
         if fmt not in ("jpeg", "png", "webp"):
             raise PhotoError("Export format must be jpeg, png or webp.")
@@ -203,6 +204,8 @@ class PhotoStore:
         with Image.open(self.version_path(photo_id)) as src:
             icc = src.info.get("icc_profile")
             img = src.convert("RGBA" if src.mode == "RGBA" else "RGB")
+        if overlay is not None:
+            img = overlay(img)
         clean = Image.new(img.mode, img.size)
         clean.paste(img)  # a fresh image carries no metadata
         if fmt == "jpeg" and clean.mode == "RGBA":
