@@ -10,6 +10,7 @@ dependencies = [
     "uvicorn>=0.30",
     "pillow>=10.4",
     "python-multipart>=0.0.9",
+    "segno>=1.6",
 ]
 
 [project.optional-dependencies]

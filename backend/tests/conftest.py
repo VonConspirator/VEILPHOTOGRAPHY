@@ -9,7 +9,7 @@ from veil.main import create_app
 
 @pytest.fixture
 def client(tmp_path):
-    return TestClient(create_app(tmp_path / "data"), base_url="http://localhost")
+    return TestClient(create_app(tmp_path / "data"), base_url="http://localhost", client=("127.0.0.1", 50000))
 
 
 @pytest.fixture

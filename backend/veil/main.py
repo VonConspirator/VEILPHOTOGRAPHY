@@ -1,4 +1,4 @@
-"""Veil web server. Phase 1: login, adult-use notice, photo upload, history (undo/redo), export."""
+"""Veil web server: login, photos, edits, history, export, and phone pairing over Tailscale."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -12,9 +12,11 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import BaseModel, Field
 
-from . import config
+from . import config, netguard
 from .auth import AuthStore
 from .history import PhotoError, PhotoStore
+from .phone import DEVICE_SECONDS, PairingError, PhoneStore
+from .tailscale import Tailscale
 from .tools import ops
 
 WEB_DIR = Path(__file__).parent / "web"
@@ -22,7 +24,8 @@ CSP = ("default-src 'self'; img-src 'self' blob: data:; style-src 'self'; script
        "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 PREVIEW_MAX_SIDE = 1400
 
-COOKIE = "veil_session"
+COOKIE = "veil_session"          # the owner at the computer
+DEVICE_COOKIE = "veil_device"    # a paired phone
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 
 
@@ -37,6 +40,15 @@ class EditRequest(BaseModel):
     mask: str | None = None  # the selection, as a PNG data URL (white = selected)
 
 
+class EnableRequest(BaseModel):
+    enabled: bool
+
+
+class RedeemRequest(BaseModel):
+    token: str
+    name: str = "Phone"
+
+
 class GotoRequest(BaseModel):
     cursor: int
 
@@ -46,20 +58,32 @@ class ExportRequest(BaseModel):
     quality: int = 92
 
 
-def create_app(data_dir: Path | None = None) -> FastAPI:
+def create_app(data_dir: Path | None = None, tailscale: Tailscale | None = None) -> FastAPI:
     data_dir = Path(data_dir) if data_dir else config.default_data_dir()
     data_dir.mkdir(parents=True, exist_ok=True)
     auth = AuthStore(data_dir)
     photos = PhotoStore(data_dir)
+    phones = PhoneStore(data_dir)
+    tailscale = tailscale or Tailscale()
     hosts = config.allowed_hosts()
     app = FastAPI(title="Veil", docs_url=None, redoc_url=None, openapi_url=None)
 
     # ------------------------------------------------------------ network guard
     @app.middleware("http")
     async def guard(request: Request, call_next):
+        scope = netguard.classify(request.client.host if request.client else None)
+        request.state.scope = scope
+        if scope == "other":  # home Wi-Fi, the open internet: never
+            return JSONResponse({"detail": "Veil only accepts connections from this computer and your Tailscale network."}, status_code=403)
+        if scope == "tailnet":
+            if not phones.enabled():
+                return JSONResponse({"detail": "Phone access is switched off on the computer."}, status_code=403)
+            if netguard.is_local_only_path(request.url.path):
+                return JSONResponse({"detail": "That can only be done at the computer."}, status_code=403)
         host = (request.headers.get("host") or "").lower()
         bare = host.rsplit(":", 1)[0] if not host.endswith("]") else host
-        if bare not in hosts and host not in hosts:
+        allowed = hosts if scope == "local" else tailscale.info().names()
+        if bare not in allowed and host not in allowed:
             return JSONResponse({"detail": "Unknown host."}, status_code=421)
         if request.method not in SAFE_METHODS:
             origin = request.headers.get("origin")
@@ -75,9 +99,20 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         return response
 
     # ------------------------------------------------------------ dependencies
+    def signed_in(request: Request) -> bool:
+        """The owner's login at the computer, or an approved paired phone. Never the other way round."""
+        if request.state.scope == "local":
+            return auth.session_ok(request.cookies.get(COOKIE))
+        return phones.device_ok(request.cookies.get(DEVICE_COOKIE))
+
     def require_user(request: Request) -> None:
-        if not auth.session_ok(request.cookies.get(COOKIE)):
-            raise HTTPException(401, "Please log in.")
+        if not signed_in(request):
+            raise HTTPException(401, "Please log in." if request.state.scope == "local" else "This phone is not paired.")
+
+    def require_owner(request: Request) -> None:
+        """Managing phones: the owner, logged in, at this computer."""
+        if request.state.scope != "local" or not auth.session_ok(request.cookies.get(COOKIE)):
+            raise HTTPException(403, "Only the owner at the computer can do that.")
 
     def require_ready(request: Request) -> None:
         require_user(request)
@@ -93,10 +128,15 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     # ------------------------------------------------------------ account
     @app.get("/api/status")
     def status(request: Request):
+        if request.state.scope != "local":  # a phone: never offer account setup or a password form
+            return {"setup_needed": False, "logged_in": signed_in(request), "scope": "remote",
+                    "device_state": phones.state_for(request.cookies.get(DEVICE_COOKIE)),
+                    "adult_notice_acknowledged": auth.adult_acknowledged()}
         return {
             "setup_needed": not auth.has_user(),
             "logged_in": auth.session_ok(request.cookies.get(COOKIE)),
             "adult_notice_acknowledged": auth.adult_acknowledged(),
+            "scope": "local",
         }
 
     def _start_session(response: Response, token: str) -> None:
@@ -134,6 +174,81 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     @app.post("/api/notice/ack", dependencies=[Depends(require_user)])
     def ack_notice():
         auth.acknowledge_adult_notice()
+        return {"ok": True}
+
+    # ------------------------------------------------------------ phones: the owner, at the computer
+    def pairing_call(fn, *args):
+        try:
+            return fn(*args)
+        except PairingError as e:
+            raise HTTPException(400, str(e)) from None
+
+    @app.get("/api/phone", dependencies=[Depends(require_owner)])
+    def phone_status():
+        info = tailscale.info()
+        listening = config.LISTENING
+        return {
+            "enabled": phones.enabled(),
+            "tailscale": {"running": info.running, "address": info.ipv4, "name": info.dns_name or info.host_name,
+                          "problem": info.problem,
+                          "listening": True if listening is None else bool(info.ipv4 and info.ipv4 in listening)},
+            "devices": phones.list(),
+        }
+
+    @app.post("/api/phone/enable", dependencies=[Depends(require_owner)])
+    def phone_enable(req: EnableRequest):
+        phones.set_enabled(req.enabled)
+        return {"enabled": phones.enabled()}
+
+    @app.post("/api/phone/pair", dependencies=[Depends(require_owner)])
+    def phone_pair():
+        """A fresh one-time QR code. The token sits after the # so it never appears in any server log."""
+        info = tailscale.info()
+        if not info.running:
+            raise HTTPException(409, info.problem or "Tailscale is not running.")
+        token, seconds = pairing_call(phones.new_token)
+        url = f"http://{info.ipv4}:{config.PORT}/pair.html#{token}"
+        import segno
+        qr = segno.make(url, error="m").svg_data_uri(scale=7, border=3, dark="#000000", light="#ffffff")
+        return {"url": url, "qr": qr, "expires_in": seconds}
+
+    @app.post("/api/phone/devices/{dev_id}/approve", dependencies=[Depends(require_owner)])
+    def phone_approve(dev_id: str):
+        pairing_call(phones.approve, dev_id)
+        return phones.list()
+
+    @app.post("/api/phone/devices/{dev_id}/deny", dependencies=[Depends(require_owner)])
+    def phone_deny(dev_id: str):
+        pairing_call(phones.deny, dev_id)
+        return phones.list()
+
+    @app.delete("/api/phone/devices/{dev_id}", dependencies=[Depends(require_owner)])
+    def phone_remove(dev_id: str):
+        pairing_call(phones.forget, dev_id)
+        return phones.list()
+
+    # ------------------------------------------------------------ phones: the phone itself
+    def require_phone(request: Request) -> None:
+        if request.state.scope != "tailnet":
+            raise HTTPException(403, "Pairing is done from the phone.")
+
+    @app.post("/api/pair/redeem", dependencies=[Depends(require_phone)])
+    def pair_redeem(req: RedeemRequest, request: Request, response: Response):
+        secret, device = pairing_call(phones.redeem, req.token, req.name, request.client.host)
+        response.set_cookie(DEVICE_COOKIE, secret, httponly=True, samesite="strict", max_age=DEVICE_SECONDS, path="/")
+        return {"state": device["status"]}
+
+    @app.get("/api/pair/state", dependencies=[Depends(require_phone)])
+    def pair_state(request: Request):
+        return {"state": phones.state_for(request.cookies.get(DEVICE_COOKIE))}
+
+    @app.post("/api/pair/forget", dependencies=[Depends(require_phone)])
+    def pair_forget(request: Request, response: Response):
+        """A phone un-pairs itself."""
+        device = phones.device_for(request.cookies.get(DEVICE_COOKIE))
+        if device:
+            phones.forget(device["id"])
+        response.delete_cookie(DEVICE_COOKIE, path="/")
         return {"ok": True}
 
     # ------------------------------------------------------------ photos

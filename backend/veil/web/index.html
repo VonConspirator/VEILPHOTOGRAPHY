@@ -42,11 +42,27 @@
     </div>
   </main>
 
+  <!-- a phone that is not (yet) allowed in -->
+  <main id="screen-unpaired" class="card-screen" hidden>
+    <div class="card">
+      <h1 id="unpaired-title">Pair this phone</h1>
+      <p id="unpaired-text"></p>
+      <ol id="unpaired-steps" class="steps">
+        <li>On your computer, open Veil and click <strong>Phone</strong>.</li>
+        <li>Turn on <strong>Allow phone access</strong>, then click <strong>Show QR code</strong>.</li>
+        <li>Point this phone's camera at the QR code and tap the link that appears.</li>
+      </ol>
+      <p class="hint">This phone also needs the Tailscale app, signed in to the same account as your computer and switched on.</p>
+      <button id="btn-unpaired-retry">Check again</button>
+    </div>
+  </main>
+
   <!-- the editor -->
   <div id="screen-app" hidden>
     <header class="topbar">
       <strong class="brand">Veil</strong>
       <button id="btn-library" title="Your photos">Photos</button>
+      <button id="btn-phone" title="Use Veil from your phone">Phone <span id="phone-badge" class="badge" hidden>0</span></button>
       <span class="sp"></span>
       <button id="btn-undo" title="Undo (Ctrl+Z)" disabled>Undo</button>
       <button id="btn-redo" title="Redo (Ctrl+Shift+Z)" disabled>Redo</button>
@@ -122,6 +138,32 @@
       <button class="primary" id="btn-open2">Add a photo</button>
       <div id="library-grid" class="grid"></div>
     </aside>
+
+    <div id="phone-dialog" class="modal" hidden>
+      <div class="card wide" role="dialog" aria-labelledby="phone-title">
+        <h2 id="phone-title">Use Veil from your phone</h2>
+        <p class="hint">Your phone connects through Tailscale, a private network between your own devices. Nothing is opened to the public internet.</p>
+        <p id="ts-status"></p>
+        <label class="check"><input type="checkbox" id="phone-enabled"> Allow phone access</label>
+        <div id="phone-pair-area" hidden>
+          <button class="primary" id="btn-make-qr">Show QR code</button>
+          <div id="qr-box" hidden>
+            <img id="qr-img" alt="QR code for pairing a phone" width="220" height="220">
+            <p id="qr-timer" class="hint"></p>
+            <ol class="steps">
+              <li>On your phone, make sure Tailscale is on. Then open the camera and point it at this code.</li>
+              <li>Tap the link that appears. The phone will say it is waiting.</li>
+              <li>Come back here and click <strong>Approve</strong> next to the phone below.</li>
+            </ol>
+            <button id="btn-copy-link">Copy link instead</button>
+          </div>
+        </div>
+        <h3>Phones</h3>
+        <ul id="device-list" class="devices"></ul>
+        <p id="phone-error" class="error" role="alert"></p>
+        <div class="row"><button id="btn-phone-close">Close</button></div>
+      </div>
+    </div>
 
     <div id="export-dialog" class="modal" hidden>
       <div class="card">

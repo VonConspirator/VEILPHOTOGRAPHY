@@ -11,6 +11,7 @@ ALLOWED_UPLOAD_FORMATS = {"JPEG", "PNG", "WEBP", "TIFF"}
 SESSION_SECONDS = 7 * 24 * 3600
 LOGIN_MAX_FAILURES = 5
 LOGIN_LOCKOUT_SECONDS = 300
+LISTENING: list[str] | None = None   # addresses the server really listens on (set at start-up)
 
 
 def default_data_dir() -> Path:

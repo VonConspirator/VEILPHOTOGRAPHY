@@ -26,6 +26,7 @@ async function api(path, opts = {}) {
     try { msg = (await res.json()).detail || msg; } catch (_) { /* not JSON */ }
     const err = new Error(typeof msg === 'string' ? msg : 'Something went wrong.');
     err.status = res.status;
+    if (remote && (res.status === 401 || res.status === 403) && !path.startsWith('/api/pair')) boot().catch(() => {});
     throw err;
   }
   return res;
@@ -41,17 +42,44 @@ function toast(msg, bad = false) {
 const fail = (e) => toast(e.message || 'Something went wrong.', true);
 
 // ---------------------------------------------------------------- screens
-const SCREENS = ['#screen-setup', '#screen-login', '#screen-notice', '#screen-app'];
+const SCREENS = ['#screen-setup', '#screen-login', '#screen-notice', '#screen-unpaired', '#screen-app'];
 function show(id) { SCREENS.forEach((s) => { $(s).hidden = s !== id; }); }
 
+let remote = false;           // true on a paired phone, false at the computer
+let phoneWait = 0;
+
+function showUnpaired(title, text, showSteps) {
+  $('#unpaired-title').textContent = title; $('#unpaired-text').textContent = text;
+  $('#unpaired-steps').hidden = !showSteps; show('#screen-unpaired');
+}
+
 async function boot() {
-  const st = await (await fetch('/api/status', { credentials: 'same-origin' })).json();
+  clearTimeout(phoneWait);
+  const res = await fetch('/api/status', { credentials: 'same-origin' });
+  if (res.status === 403) { remote = true; return showUnpaired('Phone access is off', 'Phone access is switched off on your computer. Turn on "Allow phone access" in Veil\'s Phone window, then check again.', false); }
+  const st = await res.json();
+  remote = st.scope === 'remote';
+  $('#btn-phone').hidden = remote;
+  $('#btn-logout').textContent = remote ? 'Unpair this phone' : 'Log out';
+  if (remote && !st.logged_in) {
+    if (st.device_state === 'pending') {
+      phoneWait = setTimeout(boot, 2500);
+      return showUnpaired('Waiting for approval', 'On your computer, click Approve next to this phone in Veil\'s Phone window.', false);
+    }
+    const again = ['denied', 'revoked'].includes(st.device_state);
+    return showUnpaired(again ? 'This phone was removed' : 'Pair this phone', again ? 'The computer no longer allows this phone. Pair it again:' : 'This phone is not paired with Veil yet.', true);
+  }
   if (st.setup_needed) return show('#screen-setup');
   if (!st.logged_in) return show('#screen-login');
-  if (!st.adult_notice_acknowledged) return show('#screen-notice');
+  if (!st.adult_notice_acknowledged) {
+    if (remote) return showUnpaired('One step on the computer', 'Open Veil on your computer once and confirm the adult-use notice. Then check again here.', false);
+    return show('#screen-notice');
+  }
   show('#screen-app');
+  if (!remote) pollPhoneBadge();
   await loadLibrary(true);
 }
+$('#btn-unpaired-retry').addEventListener('click', () => boot().catch(fail));
 
 function wireForm(sel, url) {
   $(sel).addEventListener('submit', async (e) => {
@@ -69,7 +97,17 @@ wireForm('#form-login', '/api/auth/login');
 $('#btn-ack').addEventListener('click', async () => {
   try { await postJSON('/api/notice/ack', {}); await boot(); } catch (ex) { $('#screen-notice .error').textContent = ex.message; }
 });
-$('#btn-logout').addEventListener('click', async () => { await postJSON('/api/auth/logout', {}); S.photo = null; await boot(); });
+let unpairArmed = 0;
+$('#btn-logout').addEventListener('click', async () => {
+  if (remote) {   // a phone un-pairs itself: it needs a second click, and must be approved again to come back
+    const b = $('#btn-logout');
+    if (!unpairArmed) { unpairArmed = setTimeout(() => { unpairArmed = 0; b.textContent = 'Unpair this phone'; }, 3000); b.textContent = 'Sure?'; return; }
+    clearTimeout(unpairArmed); unpairArmed = 0;
+    try { await postJSON('/api/pair/forget', {}); } catch (ex) { return fail(ex); }
+    S.photo = null; return boot();
+  }
+  await postJSON('/api/auth/logout', {}); S.photo = null; await boot();
+});
 
 // ---------------------------------------------------------------- library and upload
 async function loadLibrary(openLatest = false) {
@@ -541,6 +579,94 @@ $('#btn-export-go').addEventListener('click', async () => {
     $('#export-dialog').hidden = true; toast('Exported. Hidden details were removed from the file.');
   } catch (ex) { fail(ex); }
 });
+
+// ---------------------------------------------------------------- phone pairing (owner, at the computer)
+let phoneTimer = 0, qrTimer = 0, lastLink = '', deviceSig = '';
+const deviceInfo = new Map();   // device id -> its grey info line, updated in place
+const ago = (t) => { const s = Math.max(0, Math.round(Date.now() / 1000 - t)); return s < 60 ? 'just now' : s < 3600 ? Math.round(s / 60) + ' min ago' : s < 86400 ? Math.round(s / 3600) + ' h ago' : Math.round(s / 86400) + ' days ago'; };
+const STATUS_TEXT = { pending: 'Waiting for your approval', approved: 'Paired', denied: 'Not approved', revoked: 'Expired' };
+
+function phoneError(msg) { $('#phone-error').textContent = msg || ''; }
+async function phoneCall(path, method = 'POST', body) {
+  try {
+    const opts = { method, credentials: 'same-origin' };
+    if (body !== undefined) { opts.headers = { 'Content-Type': 'application/json' }; opts.body = JSON.stringify(body); }
+    const res = await api(path, opts); phoneError(''); return await res.json();
+  } catch (ex) { phoneError(ex.message); return null; }
+}
+
+async function phoneRefresh() {
+  const d = await phoneCall('/api/phone', 'GET'); if (!d) return;
+  const ts = d.tailscale, status = $('#ts-status');
+  if (ts.running) {
+    status.className = ts.listening ? 'ok' : 'warn';
+    status.textContent = ts.listening ? `Tailscale is connected (${ts.name || ts.address}).`
+      : 'Tailscale started after Veil. Close Veil and start it again, then phones can connect.';
+  } else { status.className = 'warn'; status.textContent = ts.problem + ' Phones cannot connect until it is running.'; }
+  $('#phone-enabled').checked = d.enabled;
+  $('#phone-pair-area').hidden = !d.enabled;
+  $('#btn-make-qr').disabled = !ts.running || !ts.listening;
+  if (!d.enabled) { $('#qr-box').hidden = true; clearInterval(qrTimer); }
+  const infoText = (dev) => `${STATUS_TEXT[dev.status] || dev.status} · ${dev.status === 'approved' ? 'last used ' + ago(dev.last_seen) : 'scanned ' + ago(dev.created)}`;
+  const sig = d.devices.map((x) => x.id + ':' + x.status).join('|');
+  const waiting = d.devices.filter((x) => x.status === 'pending').length;
+  const badge = $('#phone-badge'); badge.textContent = waiting; badge.hidden = !waiting;
+  if (sig === deviceSig) {            // nothing changed: do NOT rebuild the buttons (a click in progress would be lost)
+    for (const dev of d.devices) { const el = deviceInfo.get(dev.id); if (el) el.textContent = infoText(dev); }
+    return;
+  }
+  deviceSig = sig; deviceInfo.clear();
+  const list = $('#device-list'); list.replaceChildren();
+  if (!d.devices.length) { const li = document.createElement('li'); li.textContent = 'No phones yet.'; list.append(li); }
+  for (const dev of d.devices) {
+    const li = document.createElement('li');
+    const meta = document.createElement('div'); meta.className = 'meta';
+    const name = document.createElement('strong'); name.textContent = dev.name;           // phone-supplied text: textContent only
+    const info = document.createElement('span');
+    info.textContent = infoText(dev); deviceInfo.set(dev.id, info);
+    meta.append(name, info);
+    const acts = document.createElement('div'); acts.className = 'acts';
+    const btn = (label, cls, fn) => { const b = document.createElement('button'); b.textContent = label; if (cls) b.className = cls; b.addEventListener('click', fn); acts.append(b); return b; };
+    if (dev.status === 'pending') {
+      btn('Approve', 'primary', async () => { await phoneCall(`/api/phone/devices/${dev.id}/approve`); phoneRefresh(); });
+      btn('Deny', '', async () => { await phoneCall(`/api/phone/devices/${dev.id}/deny`); phoneRefresh(); });
+    } else {
+      let armed = 0; const rm = btn('Remove', '', async () => {
+        if (!armed) { armed = setTimeout(() => { armed = 0; rm.textContent = 'Remove'; }, 3000); rm.textContent = 'Sure?'; return; }
+        await phoneCall(`/api/phone/devices/${dev.id}`, 'DELETE'); phoneRefresh();
+      });
+    }
+    li.append(meta, acts); list.append(li);
+  }
+}
+
+function openPhone() { $('#phone-dialog').hidden = false; phoneError(''); deviceSig = '\0'; phoneRefresh(); clearInterval(phoneTimer); phoneTimer = setInterval(phoneRefresh, 2500); }
+function closePhone() { $('#phone-dialog').hidden = true; clearInterval(phoneTimer); clearInterval(qrTimer); $('#qr-box').hidden = true; $('#qr-img').removeAttribute('src'); lastLink = ''; }
+$('#btn-phone').addEventListener('click', openPhone);
+$('#btn-phone-close').addEventListener('click', closePhone);
+$('#phone-enabled').addEventListener('change', async (e) => { await phoneCall('/api/phone/enable', 'POST', { enabled: e.target.checked }); phoneRefresh(); });
+$('#btn-make-qr').addEventListener('click', async () => {
+  const d = await phoneCall('/api/phone/pair'); if (!d) return;
+  lastLink = d.url; $('#qr-img').src = d.qr; $('#qr-box').hidden = false;
+  let left = d.expires_in; clearInterval(qrTimer);
+  const tick = () => {
+    if (left <= 0) { clearInterval(qrTimer); $('#qr-box').hidden = true; $('#qr-img').removeAttribute('src'); lastLink = ''; phoneError('That QR code expired. Click Show QR code for a new one.'); return; }
+    $('#qr-timer').textContent = `Works once, for ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')} more.`; left -= 1;
+  };
+  tick(); qrTimer = setInterval(tick, 1000);
+});
+$('#btn-copy-link').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText(lastLink); toast('Link copied. Open it on your phone within 5 minutes.'); } catch (_) { toast('Could not copy. Scan the QR code instead.', true); }
+});
+// a small number on the Phone button when a phone is waiting
+let badgeTimer = 0;
+function pollPhoneBadge() {
+  clearInterval(badgeTimer);
+  badgeTimer = setInterval(async () => {
+    if (remote || $('#screen-app').hidden || !$('#phone-dialog').hidden) return;
+    try { const d = await (await fetch('/api/phone', { credentials: 'same-origin' })).json(); const n = (d.devices || []).filter((x) => x.status === 'pending').length; $('#phone-badge').textContent = n; $('#phone-badge').hidden = !n; } catch (_) { /* ignore */ }
+  }, 10000);
+}
 
 // ---------------------------------------------------------------- start
 buildSliders(); setTool('view'); boot().catch(fail);
