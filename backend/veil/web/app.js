@@ -77,7 +77,7 @@ async function boot() {
   }
   show('#screen-app');
   if (!remote) pollPhoneBadge();
-  loadAI();
+  loadAI(); loadVision();
   await loadLibrary(true);
 }
 $('#btn-unpaired-retry').addEventListener('click', () => boot().catch(fail));
@@ -285,6 +285,7 @@ function refreshUI() {
   $('#btn-compare').setAttribute('aria-pressed', String(S.compare));
   $('#btn-export').disabled = !has;
   $('#cmd-text').disabled = $('#cmd-send').disabled = !has;
+  if (typeof renderCleanup === 'function') renderCleanup();
   $('#btn-straighten').disabled = !has || Number($('#straighten').value) === 0;
   const dirty = SLIDERS.some(([k]) => S.adj[k]);
   $('#btn-adjust-apply').disabled = !has || !dirty; $('#btn-adjust-reset').disabled = !has || !dirty;
@@ -300,7 +301,7 @@ function refreshUI() {
 
 // ---------------------------------------------------------------- history buttons
 async function step(call) {
-  try { S.photo = await (await call()).json(); resetSliders(); await refresh(); } catch (ex) { fail(ex); }
+  try { S.photo = await (await call()).json(); resetSliders(); await refresh(); return true; } catch (ex) { fail(ex); return false; }
 }
 const undo = () => S.photo && S.photo.cursor > 0 && step(() => postJSON(`/api/photos/${S.photo.id}/undo`, {}));
 const redo = () => S.photo && S.photo.cursor < S.photo.versions.length - 1 && step(() => postJSON(`/api/photos/${S.photo.id}/redo`, {}));
@@ -406,7 +407,7 @@ const overlay = $('#overlay');
 overlay.addEventListener('pointerdown', (e) => {
   if (S.tool === 'view' || !S.photo || S.gesture || S.block) return;
   overlay.setPointerCapture(e.pointerId); const p = norm(e);
-  if (S.tool === 'point') { S.sel.points.push({ x: p.x, y: p.y }); draw(); return; }
+  if (S.tool === 'point') { S.sel.points.push({ x: p.x, y: p.y, label: (S.sel.outside || e.shiftKey) ? 0 : 1 }); draw(); smartSelect({ points: S.sel.points.map((q) => [q.x, q.y, q.label]) }); return; }
   if (S.tool === 'brush') { S.drag = { last: p }; paintBrush(p, p); draw(); return; }
   if (S.tool === 'box') { S.drag = { anchor: p, rect: null }; return; }
   if (S.tool === 'crop') S.drag = cropHit(p);
@@ -426,7 +427,9 @@ overlay.addEventListener('pointermove', (e) => {
 });
 function endDrag() {
   const d = S.drag; S.drag = null; if (!d) return;
-  if (S.tool === 'box' && d.rect && (d.rect.x1 - d.rect.x0) * S.frameW > 4 && (d.rect.y1 - d.rect.y0) * S.frameH > 4) { S.sel.boxes.push(d.rect); }
+  if (S.tool === 'box' && d.rect && (d.rect.x1 - d.rect.x0) * S.frameW > 4 && (d.rect.y1 - d.rect.y0) * S.frameH > 4) {
+    if (S.sel.snap) smartSelect({ box: [d.rect.x0, d.rect.y0, d.rect.x1, d.rect.y1] }); else S.sel.boxes.push(d.rect);
+  }
   scheduleAdjustPreview(); refreshUI(); draw();
 }
 overlay.addEventListener('pointerup', endDrag);
@@ -448,7 +451,7 @@ function draw() {
   for (const b of boxes) { ctx.fillStyle = SEL_COLOR; ctx.strokeStyle = '#fff'; ctx.fillRect(b.x0 * W, b.y0 * H, (b.x1 - b.x0) * W, (b.y1 - b.y0) * H); ctx.strokeRect(b.x0 * W, b.y0 * H, (b.x1 - b.x0) * W, (b.y1 - b.y0) * H); }
   ctx.setLineDash([]);
   S.sel.points.forEach((p, i) => {
-    ctx.beginPath(); ctx.arc(p.x * W, p.y * H, 9, 0, Math.PI * 2); ctx.fillStyle = '#c4577e'; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = '#fff'; ctx.stroke();
+    ctx.beginPath(); ctx.arc(p.x * W, p.y * H, 9, 0, Math.PI * 2); ctx.fillStyle = p.label === 0 ? '#555' : '#c4577e'; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = '#fff'; ctx.stroke();
     ctx.fillStyle = '#fff'; ctx.font = 'bold 11px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(String(i + 1), p.x * W, p.y * H + 0.5);
   });
   if (S.tool === 'crop' && S.crop) {
@@ -467,7 +470,7 @@ function draw() {
 // ---------------------------------------------------------------- tools and their options
 const TOOL_HELP = {
   view: 'Look around. Pick a tool on the left to select an area or crop.',
-  point: 'Click to drop numbered points. Points are saved for the AI tools coming in a later phase.',
+  point: 'Click on the thing you want (a person, an object, a tattoo). Veil outlines it. Click more to refine; use Outside (or Shift+click) to cut away parts.',
   brush: 'Paint over the area to select. The Adjust sliders below then change only that area.',
   box: 'Drag to draw a box around an area. Draw more than one if you like.',
   crop: 'Drag the corners to resize, drag inside to move.',
@@ -487,6 +490,20 @@ function setTool(t) {
       row.append(b);
     }
     box.append(row);
+  }
+  if (t === 'point') {
+    const row = document.createElement('div'); row.className = 'row';
+    for (const [label, outside] of [['Inside', false], ['Outside', true]]) {
+      const b = document.createElement('button'); b.textContent = label; b.setAttribute('aria-pressed', String(!!S.sel.outside === outside));
+      b.addEventListener('click', () => { S.sel.outside = outside; row.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b))); });
+      row.append(b);
+    }
+    box.append(row);
+  }
+  if (t === 'box') {
+    const lab = document.createElement('label'); lab.className = 'check';
+    const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !!S.sel.snap; cb.addEventListener('change', () => { S.sel.snap = cb.checked; });
+    lab.append(cb, ' Snap the box to the object (AI)'); box.append(lab);
   }
   if (['point', 'brush', 'box'].includes(t)) {
     const b = document.createElement('button'); b.textContent = 'Clear selection'; b.style.marginTop = '8px';
@@ -514,9 +531,9 @@ document.querySelectorAll('.tools button').forEach((b) => b.addEventListener('cl
 
 // ---------------------------------------------------------------- edits
 async function edit(op, params, withMask = false) {
-  const p = S.photo; if (!p) return;
+  const p = S.photo; if (!p) return false;
   const mask = withMask ? selectionMask() : null;
-  await step(() => postJSON(`/api/photos/${p.id}/edit`, { op, params, mask }));
+  return step(() => postJSON(`/api/photos/${p.id}/edit`, { op, params, mask }));
 }
 async function applyCrop() {
   const c = S.crop; if (!c) return;
@@ -670,6 +687,53 @@ function pollPhoneBadge() {
   }, 10000);
 }
 
+// ---------------------------------------------------------------- AI selection and cleanup tools (phase 5)
+S.vision = null;
+async function loadVision() {
+  try { S.vision = await (await api('/api/vision')).json(); } catch (_) { S.vision = null; }
+  renderCleanup();
+}
+function renderCleanup() {
+  const v = S.vision, ok = !!v && v.ready;
+  $('#cleanup-status').textContent = !v ? 'Could not check the editing models.'
+    : ok ? 'Editing models are ready.' : (!v.libraries ? 'The editing libraries are not installed.' : 'Some editing models are not downloaded yet.') + (remote ? ' Set them up on the computer.' : ' Open Model, then Editing models.');
+  document.querySelectorAll('#cleanup button').forEach((b) => { b.dataset.needs = '1'; b.disabled = !ok || !S.photo || aiBusy; });
+}
+let aiBusy = false;
+async function smartSelect(body) {
+  const p = S.photo; if (!p || aiBusy) return;
+  aiBusy = true; renderCleanup(); toast('Finding the outline…');
+  try {
+    const blob = await (await postJSON(`/api/photos/${p.id}/segment`, body)).blob();
+    const bmp = await createImageBitmap(blob);
+    const c = S.sel.brush, ctx = c.getContext('2d');
+    const tmp = document.createElement('canvas'); tmp.width = c.width; tmp.height = c.height;
+    const tctx = tmp.getContext('2d'); tctx.drawImage(bmp, 0, 0, c.width, c.height);
+    const px = tctx.getImageData(0, 0, c.width, c.height), d = px.data;
+    for (let i = 0; i < d.length; i += 4) { d[i + 3] = d[i]; d[i] = d[i + 1] = d[i + 2] = 255; }   // white where selected, clear elsewhere
+    ctx.globalCompositeOperation = 'source-over'; ctx.clearRect(0, 0, c.width, c.height); ctx.putImageData(px, 0, 0);
+    S.sel.painted = true; S.sel.boxes = [];
+    toast('Selected. Click more to refine, or pick an action on the right.');
+  } catch (ex) { S.sel.points.pop(); fail(ex); }
+  finally { aiBusy = false; renderCleanup(); refreshUI(); draw(); }
+}
+async function aiEdit(op, params, useSelection) {
+  if (aiBusy) return false;
+  aiBusy = true; renderCleanup(); toast('Working… this can take a few seconds.');
+  try {
+    const ok = await edit(op, params, useSelection && hasMask());
+    if (ok) { resetSelection(); setTool('view'); toast('Done. Undo takes it back.'); }
+    return ok;
+  } finally { aiBusy = false; renderCleanup(); }
+}
+const needArea = () => { if (!hasMask()) { toast('Select the area first: use the Point, Brush or Box tool.', true); return false; } return true; };
+$('#btn-remove-object').addEventListener('click', () => needArea() && aiEdit('remove_object', {}, true));
+$('#btn-remove-tattoo').addEventListener('click', () => needArea() && aiEdit('remove_tattoo', {}, true));
+$('#btn-remove-bg').addEventListener('click', () => aiEdit('remove_background', {}, true));
+$('#btn-blur-bg').addEventListener('click', () => aiEdit('blur_background', { amount: Number($('#blur-amount').value) }, true));
+$('#btn-replace-bg').addEventListener('click', () => aiEdit('replace_background', { color: $('#bg-color').value }, true));
+$('#blur-amount').addEventListener('input', () => { $('#out-blur').textContent = $('#blur-amount').value; });
+
 // ---------------------------------------------------------------- command bar: type a request, Veil asks where, then applies it
 S.ai = null; S.pending = null;
 let cloudArmed = false, cmdBusy = false;
@@ -712,10 +776,22 @@ async function runPlan(plan) {
   const note = plan.asked && plan.asked.photo_sent ? ` (the photo was sent to ${plan.asked.provider})` : '';
   if (plan.action === 'none') return showReply((plan.reply || 'I could not turn that into an edit.') + note);
   if (!plan.available) return showReply(`I understood: ${plan.label}. That tool is not built yet; it arrives in a later phase. Nothing was changed.`);
+  const finish = (ok) => showReply(ok ? `Done: ${plan.label}. Undo (Ctrl+Z) takes it back.` + note : `Could not do: ${plan.label}. Nothing was changed.`, !ok);
   const done = async (op, params, withMask) => {
-    await edit(op, params, withMask);
-    if (withMask) { resetSelection(); setTool('view'); }
-    showReply(`Done: ${plan.label}. Undo (Ctrl+Z) takes it back.` + note);
+    const ok = await edit(op, params, withMask);
+    if (ok && withMask) { resetSelection(); setTool('view'); }
+    finish(ok);
+  };
+  const askArea = (op, params, allowWhole) => {            // "Where should it apply?"
+    const startArea = (tool) => {
+      setTool(tool); S.pending = plan;
+      const apply = async () => { if (!hasMask()) return toast('Mark an area first.', true); S.pending = null; await done(op, params, true); };
+      showReply('Mark the area, then click Apply here.', false, [['Apply here', apply, true], ['Cancel', () => { S.pending = null; resetSelection(); setTool('view'); showReply(''); }]]);
+    };
+    const btns = [];
+    if (allowWhole) btns.push(['Whole photo', () => done(op, params, false), true]);
+    btns.push(['Click it (AI)', () => startArea('point'), !allowWhole], ['Brush an area', () => startArea('brush')], ['Box an area', () => startArea('box')]);
+    showReply((plan.reply ? plan.reply + ' ' : '') + 'Where should it apply?' + note, false, btns);
   };
   if (plan.action === 'rotate90' || plan.action === 'flip' || plan.action === 'straighten') return done(plan.action, plan.params, false);
   if (plan.action === 'crop') {
@@ -725,15 +801,15 @@ async function runPlan(plan) {
   if (plan.action === 'adjust') {
     const params = fullAdjust(plan.params);
     if (hasMask()) return done('adjust', params, true);       // an area is already marked: use it
-    const startArea = (tool) => {
-      setTool(tool); S.pending = plan;
-      const apply = async () => { if (!hasMask()) return toast('Mark an area first.', true); S.pending = null; await done('adjust', params, true); };
-      showReply('Mark the area, then click Apply here.', false, [['Apply here', apply, true], ['Cancel', () => { S.pending = null; resetSelection(); setTool('view'); showReply(''); }]]);
-    };
-    const btns = [];
-    if (plan.region !== 'required') btns.push(['Whole photo', () => done('adjust', params, false), true]);
-    btns.push(['Brush an area', () => startArea('brush')], ['Box an area', () => startArea('box')]);
-    return showReply((plan.reply ? plan.reply + ' ' : '') + 'Where should it apply?' + note, false, btns);
+    return askArea('adjust', params, true);
+  }
+  if (plan.action === 'remove_tattoo' || plan.action === 'remove_object') {
+    if (hasMask()) { aiBusy = true; renderCleanup(); try { return await done(plan.action, {}, true); } finally { aiBusy = false; renderCleanup(); } }
+    return askArea(plan.action, {}, false);
+  }
+  if (['remove_background', 'blur_background', 'replace_background'].includes(plan.action)) {
+    aiBusy = true; renderCleanup(); showReply('Working… this can take a few seconds.');
+    try { return await done(plan.action, plan.params, true); } finally { aiBusy = false; renderCleanup(); }
   }
   showReply('I could not apply that.', true);
 }
@@ -790,7 +866,7 @@ async function aiRefresh() {
     for (const t of m.tiers) {
       const li = document.createElement('li'); const meta = document.createElement('div'); meta.className = 'meta';
       const nm = document.createElement('strong'); nm.textContent = `${t.tier}: ${t.name}`;
-      const sub = document.createElement('span'); sub.textContent = `${t.hardware} · ${t.license} · ${t.note}`;
+      const sub = document.createElement('span'); sub.textContent = `${t.hardware} · ${t.size} · ${t.license} · ${t.note}`;
       meta.append(nm, sub); li.append(meta);
       const acts = document.createElement('div'); acts.className = 'acts';
       if (t.installed) { const ok = document.createElement('span'); ok.className = 'ok'; ok.textContent = 'Installed'; acts.append(ok); }
@@ -801,10 +877,32 @@ async function aiRefresh() {
       }
       li.append(acts); tl.append(li);
     }
+    await visionRefresh();
     const d = m.download, dl = $('#ai-dl'); dl.hidden = !(d.running || d.error);
     dl.textContent = d.error ? d.error : `Downloading ${d.name}: ${d.status}${d.total ? ` ${Math.round(100 * d.done / d.total)}%` : ''}`;
     if (!d.running) loadAI();
   } catch (ex) { aiError(ex.message); }
+}
+const fmtSize = (n) => n >= 1e9 ? (n / 1e9).toFixed(1) + ' GB' : Math.round(n / 1e6) + ' MB';
+async function visionRefresh() {
+  const v = await (await api('/api/vision')).json();
+  $('#vision-note').textContent = v.ready ? `Ready on ${v.device === 'cuda' ? 'the graphics card' : 'the processor (slow)'}.` : (v.libraries ? 'Download the Recommended models to use the cleanup and background tools.' : 'The editing libraries are not installed (see the README).');
+  const list = $('#vision-models'); list.replaceChildren();
+  for (const m of v.models) {
+    const li = document.createElement('li'); const meta = document.createElement('div'); meta.className = 'meta';
+    const nm = document.createElement('strong'); nm.textContent = `${m.label}${m.required ? '' : ' (optional)'}`;
+    const sub = document.createElement('span'); sub.textContent = `${m.use} · ${fmtSize(m.size)} · ${m.license}`;
+    meta.append(nm, sub);
+    if (m.extra_packages && !v.generative_libs) { const x = document.createElement('span'); x.textContent = `Also needs: pip install ${m.extra_packages}`; meta.append(x); }
+    li.append(meta);
+    const acts = document.createElement('div'); acts.className = 'acts';
+    if (m.installed) { const ok = document.createElement('span'); ok.className = 'ok'; ok.textContent = 'Installed'; acts.append(ok); }
+    else { const b = document.createElement('button'); b.textContent = 'Download'; b.disabled = v.download.running; b.addEventListener('click', () => aiPost('POST', `/api/vision/models/${encodeURIComponent(m.name)}/download`)); acts.append(b); }
+    li.append(acts); list.append(li);
+  }
+  const d = v.download, el = $('#vision-dl'); el.hidden = !(d.running || d.error);
+  el.textContent = d.error ? d.error : `Downloading ${d.name}: ${d.total ? Math.round(100 * d.done / d.total) : 0}% (${d.file})`;
+  if (!d.running) loadVision();
 }
 async function aiPost(method, url, body) {
   aiError('');

@@ -29,15 +29,15 @@ ACTIONS: dict[str, dict] = {
                          "about": "Anonymise a face with a newly generated face (never one from another photo)."},
     "face_edit":        {"label": "Edit the face or look", "region": "optional", "available": False,
                          "about": "Skin, eyes, hair colour and similar look edits. what: short description."},
-    "remove_tattoo":    {"label": "Remove a tattoo", "region": "required", "available": False,
+    "remove_tattoo":    {"label": "Remove a tattoo", "region": "required", "available": True,
                          "about": "Remove a tattoo from the skin."},
-    "remove_object":    {"label": "Remove an object", "region": "required", "available": False,
+    "remove_object":    {"label": "Remove an object", "region": "required", "available": True,
                          "about": "Remove something and fill in behind it."},
-    "remove_background": {"label": "Remove the background", "region": "none", "available": False,
+    "remove_background": {"label": "Remove the background", "region": "none", "available": True,
                           "about": "Cut out the person."},
-    "replace_background": {"label": "Replace the background", "region": "none", "available": False,
-                           "about": "Put a different background behind the person. what: short description."},
-    "blur_background":  {"label": "Blur the background", "region": "none", "available": False,
+    "replace_background": {"label": "Replace the background", "region": "none", "available": True,
+                           "about": "Put a different background behind the person. color: a colour name or #rrggbb, OR scene: a short description (scenes need an optional model)."},
+    "blur_background":  {"label": "Blur the background", "region": "none", "available": True,
                          "about": "Soften the background. amount: 0..100."},
     "watermark":        {"label": "Add a watermark", "region": "none", "available": False,
                          "about": "Add a text or logo watermark. text: the words."},
@@ -78,7 +78,17 @@ def clean_params(action: str, raw: object) -> dict:
     elif action == "blur_background":
         v = _clamp(raw.get("amount", 50), 0, 100)
         out["amount"] = round(v if v is not None else 50)
-    elif action in ("face_edit", "replace_background"):
+    elif action == "replace_background":
+        from ..vision.ops import parse_color
+        color = parse_color(raw.get("color"))
+        scene = str(raw.get("scene", "") or "")[:200].strip()
+        if color:
+            out["color"] = color
+        elif scene:
+            out["scene"] = scene
+        else:
+            out["color"] = "#ffffff"
+    elif action == "face_edit":
         out["what"] = str(raw.get("what", ""))[:200]
     elif action == "watermark":
         out["text"] = str(raw.get("text", ""))[:100]

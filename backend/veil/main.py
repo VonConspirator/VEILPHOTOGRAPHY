@@ -20,6 +20,9 @@ from .history import PhotoError, PhotoStore
 from .phone import DEVICE_SECONDS, PairingError, PhoneStore
 from .tailscale import Tailscale
 from .tools import ops
+from .vision import ops as vision_ops
+from .vision import routes as vision_routes
+from .vision.engine import Engine
 
 WEB_DIR = Path(__file__).parent / "web"
 CSP = ("default-src 'self'; img-src 'self' blob: data:; style-src 'self'; script-src 'self'; "
@@ -60,13 +63,14 @@ class ExportRequest(BaseModel):
     quality: int = 92
 
 
-def create_app(data_dir: Path | None = None, tailscale: Tailscale | None = None) -> FastAPI:
+def create_app(data_dir: Path | None = None, tailscale: Tailscale | None = None, vision: Engine | None = None) -> FastAPI:
     data_dir = Path(data_dir) if data_dir else config.default_data_dir()
     data_dir.mkdir(parents=True, exist_ok=True)
     auth = AuthStore(data_dir)
     photos = PhotoStore(data_dir)
     phones = PhoneStore(data_dir)
     tailscale = tailscale or Tailscale()
+    engine = vision or Engine(config.default_models_dir())
     hosts = config.allowed_hosts()
     app = FastAPI(title="Veil", docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -278,7 +282,7 @@ def create_app(data_dir: Path | None = None, tailscale: Tailscale | None = None)
 
     def _run_edit(photo_id: str, req: EditRequest, source: Image.Image):
         mask = photo_call(ops.decode_mask, req.mask)
-        return photo_call(ops.apply_op, source, req.op, req.params, mask)
+        return photo_call(ops.apply_op, source, req.op, req.params, mask, engine)
 
     @app.post("/api/photos/{photo_id}/edit", dependencies=[Depends(require_ready)])
     def edit(photo_id: str, req: EditRequest):
@@ -290,6 +294,8 @@ def create_app(data_dir: Path | None = None, tailscale: Tailscale | None = None)
     @app.post("/api/photos/{photo_id}/preview", dependencies=[Depends(require_ready)])
     def preview(photo_id: str, req: EditRequest):
         """The same edit on a smaller copy, not saved. Lets the sliders feel instant."""
+        if req.op in vision_ops.AI_OPS:
+            raise HTTPException(400, "This edit has no live preview.")
         current = photo_call(photos.open_current, photo_id)
         small = current.copy()
         small.thumbnail((PREVIEW_MAX_SIDE, PREVIEW_MAX_SIDE), Image.Resampling.LANCZOS)
@@ -320,6 +326,7 @@ def create_app(data_dir: Path | None = None, tailscale: Tailscale | None = None)
         photo_call(photos.delete, photo_id)
         return {"ok": True}
 
+    vision_routes.register(app, engine=engine, photos=photos, require_ready=require_ready, require_owner=require_owner)
     ai_settings = AISettings(data_dir)
     ai_routes.register(app, settings=ai_settings, photos=photos, small_jpeg=_small_jpeg,
                        require_ready=require_ready, require_owner=require_owner)
@@ -327,6 +334,7 @@ def create_app(data_dir: Path | None = None, tailscale: Tailscale | None = None)
     app.state.photos = photos
     app.state.auth = auth
     app.state.ai_settings = ai_settings
+    app.state.vision = engine
     app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="web")  # the editor page (after the API routes)
     return app
 

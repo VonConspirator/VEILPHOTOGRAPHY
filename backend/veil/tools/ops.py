@@ -123,7 +123,10 @@ def straighten(img: Image.Image, params: dict) -> Image.Image:
 GEOMETRY = {"crop": crop, "rotate90": rotate90, "flip": flip, "straighten": straighten}
 
 
-def apply_op(img: Image.Image, op: str, params: dict, mask: Image.Image | None = None) -> Image.Image:
+def apply_op(img: Image.Image, op: str, params: dict, mask: Image.Image | None = None, engine=None) -> Image.Image:
+    from ..vision import ops as vision_ops   # the AI edits (phase 5)
+    if op in vision_ops.AI_OPS:
+        return vision_ops.run(engine, op, img, params, mask)
     if op == "adjust":
         edited = adjust(img, params)
         if mask is not None:  # only the selected area changes
@@ -138,6 +141,9 @@ def apply_op(img: Image.Image, op: str, params: dict, mask: Image.Image | None =
 
 
 def describe(op: str, params: dict, selected: bool) -> str:
+    from ..vision import ops as vision_ops
+    if op in vision_ops.AI_OPS:
+        return vision_ops.describe(op, params)
     if op == "adjust":
         parts = [f"{k} {int(float(params[k])):+d}" for k in ADJUST_KEYS if k in params and float(params[k])]
         return "Adjust " + ", ".join(parts) + (" (selection)" if selected else "")

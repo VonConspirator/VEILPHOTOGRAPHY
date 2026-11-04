@@ -100,3 +100,4 @@ label.check input { width: auto; }
 .cmdreply.bad { color: var(--danger); }
 .aiform { display: grid; gap: 8px; margin: 8px 0; }
 .aiform label.check { margin: 4px 0; }
+input[type=color] { height: 38px; padding: 2px; cursor: pointer; }

@@ -137,9 +137,9 @@ def test_parameters_are_clamped_and_unknown_ones_dropped():
 
 
 def test_later_phase_tools_are_understood_but_marked_unavailable():
-    plan = parser.validate({"action": "remove_tattoo", "params": {}})
+    plan = parser.validate({"action": "blur_face", "params": {}})
     assert plan["available"] is False and plan["region"] == "required"
-    assert all(not actions.ACTIONS[n]["available"] for n in ("blur_face", "remove_object", "watermark"))
+    assert all(not actions.ACTIONS[n]["available"] for n in ("blur_face", "pixelate_face", "generate_face", "face_edit", "watermark"))
     assert parser.validate({"action": "adjust", "params": {"brightness": 5}})["available"] is True
 
 
@@ -339,7 +339,7 @@ def test_only_the_owner_at_the_computer_can_change_ai_settings(ai):
     body = {"id": "x", "kind": "openai", "base_url": "https://x.test", "model": "m"}
     for call in [lambda c: c.get("/api/ai/settings"), lambda c: c.put("/api/ai/providers", json=body),
                  lambda c: c.post("/api/ai/active", json={"id": "x"}), lambda c: c.delete("/api/ai/providers/local-ollama"),
-                 lambda c: c.get("/api/ai/models"), lambda c: c.post("/api/ai/models/pull", json={"name": "qwen3-vl:2b"}),
+                 lambda c: c.get("/api/ai/models"), lambda c: c.post("/api/ai/models/pull", json={"name": "qwen3.5:2b"}),
                  lambda c: c.post("/api/ai/test")]:
         assert call(w.phone).status_code == 403
     assert w.phone.get("/api/ai").status_code == 200  # the phone may see which model is in use (no keys)
@@ -375,14 +375,14 @@ def test_downloads_are_limited_to_the_listed_models_and_to_local_ollama(ai):
     assert ai.c.post("/api/ai/models/pull", json={"name": "llama3.2"}).status_code == 400
     assert len(ai.fake.requests) == n  # nothing was requested
     use_cloud(ai)
-    assert ai.c.post("/api/ai/models/pull", json={"name": "qwen3-vl:2b"}).status_code == 400
+    assert ai.c.post("/api/ai/models/pull", json={"name": "qwen3.5:2b"}).status_code == 400
     assert ai.c.get("/api/ai/models").json()["can_download"] is False
 
 
 def test_a_listed_model_downloads_through_ollama_with_progress(ai):
     import time
-    r = ai.c.post("/api/ai/models/pull", json={"name": "qwen3-vl:2b"})
-    assert r.status_code == 200 and r.json()["name"] == "qwen3-vl:2b"
+    r = ai.c.post("/api/ai/models/pull", json={"name": "qwen3.5:2b"})
+    assert r.status_code == 200 and r.json()["name"] == "qwen3.5:2b"
     for _ in range(50):
         d = ai.c.get("/api/ai/models").json()["download"]
         if not d["running"]:
@@ -390,7 +390,7 @@ def test_a_listed_model_downloads_through_ollama_with_progress(ai):
         time.sleep(0.1)
     assert d["running"] is False and d["error"] == ""
     pulls = [q for q in ai.fake.requests if q.path == "/api/pull"]
-    assert len(pulls) == 1 and pulls[0].body["model"] == "qwen3-vl:2b"
+    assert len(pulls) == 1 and pulls[0].body["model"] == "qwen3.5:2b"
 
 
 def test_a_fresh_install_defaults_to_qwen35_9b(ready):

@@ -14,6 +14,10 @@ LOGIN_LOCKOUT_SECONDS = 300
 LISTENING: list[str] | None = None   # addresses the server really listens on (set at start-up)
 
 
+def default_models_dir() -> Path:
+    return Path(os.environ.get("VEIL_MODELS_DIR") or Path(__file__).resolve().parents[2] / "models")
+
+
 def default_data_dir() -> Path:
     return Path(os.environ.get("VEIL_DATA_DIR") or Path(__file__).resolve().parents[2] / "data")
 

@@ -12,9 +12,14 @@ dependencies = [
     "python-multipart>=0.0.9",
     "segno>=1.6",
     "httpx>=0.27",
+    "numpy>=1.26",
 ]
 
 [project.optional-dependencies]
+# the AI editing tools (selection, object removal, background); the models themselves are downloaded from inside Veil
+editing = ["torch>=2.5", "torchvision", "opencv-python-headless", "safetensors", "timm", "einops", "kornia", "sam2>=1.1"]
+# optional generative fill (Stable Diffusion XL Inpainting)
+generative = ["diffusers", "transformers", "accelerate"]
 dev = ["pytest>=8"]
 
 [tool.setuptools.packages.find]
@@ -22,6 +27,7 @@ where = ["backend"]
 
 [tool.setuptools.package-data]
 veil = ["web/*"]
+"veil.vision.vendor" = ["LICENSE-BiRefNet"]
 
 [tool.pytest.ini_options]
 testpaths = ["backend/tests"]

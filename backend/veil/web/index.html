@@ -124,6 +124,23 @@
           </div>
         </section>
 
+        <section id="cleanup">
+          <h2>Cleanup and background</h2>
+          <p id="cleanup-status" class="hint"></p>
+          <p class="hint">Select an area first (Point tool: click the thing). Veil removes it and fills in behind.</p>
+          <div class="row wrap">
+            <button id="btn-remove-object" disabled>Remove object</button>
+            <button id="btn-remove-tattoo" disabled>Remove tattoo</button>
+          </div>
+          <p class="hint">Background: if you selected the person, Veil uses your selection; otherwise it finds the person itself.</p>
+          <button id="btn-remove-bg" disabled>Remove background</button>
+          <label class="slider">Blur amount <output id="out-blur">50</output>
+            <input id="blur-amount" type="range" min="5" max="100" value="50"></label>
+          <button id="btn-blur-bg" disabled>Blur background</button>
+          <label class="slider">New background colour <input id="bg-color" type="color" value="#d8c3a5"></label>
+          <button id="btn-replace-bg" disabled>Replace background</button>
+        </section>
+
         <section>
           <h2>Rotate and flip</h2>
           <div class="row wrap">
@@ -186,6 +203,10 @@
         <p id="ai-models-note" class="hint"></p>
         <ul id="ai-tiers" class="devices"></ul>
         <p id="ai-dl" class="hint" hidden></p>
+        <h3>Editing models</h3>
+        <p id="vision-note" class="hint"></p>
+        <ul id="vision-models" class="devices"></ul>
+        <p id="vision-dl" class="hint" hidden></p>
         <h3>Add or change a model</h3>
         <form id="ai-form" class="aiform">
           <label>Type <select name="kind"><option value="ollama">Ollama (on this computer)</option><option value="openai">OpenAI-compatible service</option><option value="anthropic">Anthropic</option></select></label>
