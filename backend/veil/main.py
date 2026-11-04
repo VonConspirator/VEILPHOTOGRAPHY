@@ -13,6 +13,8 @@ from PIL import Image
 from pydantic import BaseModel, Field
 
 from . import config, netguard
+from .ai import routes as ai_routes
+from .ai.settings import AISettings
 from .auth import AuthStore
 from .history import PhotoError, PhotoStore
 from .phone import DEVICE_SECONDS, PairingError, PhoneStore
@@ -318,8 +320,13 @@ def create_app(data_dir: Path | None = None, tailscale: Tailscale | None = None)
         photo_call(photos.delete, photo_id)
         return {"ok": True}
 
+    ai_settings = AISettings(data_dir)
+    ai_routes.register(app, settings=ai_settings, photos=photos, small_jpeg=_small_jpeg,
+                       require_ready=require_ready, require_owner=require_owner)
+
     app.state.photos = photos
     app.state.auth = auth
+    app.state.ai_settings = ai_settings
     app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="web")  # the editor page (after the API routes)
     return app
 

@@ -77,6 +77,7 @@ async function boot() {
   }
   show('#screen-app');
   if (!remote) pollPhoneBadge();
+  loadAI();
   await loadLibrary(true);
 }
 $('#btn-unpaired-retry').addEventListener('click', () => boot().catch(fail));
@@ -283,6 +284,7 @@ function refreshUI() {
   $('#btn-compare').disabled = !has || p.cursor === 0;
   $('#btn-compare').setAttribute('aria-pressed', String(S.compare));
   $('#btn-export').disabled = !has;
+  $('#cmd-text').disabled = $('#cmd-send').disabled = !has;
   $('#btn-straighten').disabled = !has || Number($('#straighten').value) === 0;
   const dirty = SLIDERS.some(([k]) => S.adj[k]);
   $('#btn-adjust-apply').disabled = !has || !dirty; $('#btn-adjust-reset').disabled = !has || !dirty;
@@ -667,6 +669,166 @@ function pollPhoneBadge() {
     try { const d = await (await fetch('/api/phone', { credentials: 'same-origin' })).json(); const n = (d.devices || []).filter((x) => x.status === 'pending').length; $('#phone-badge').textContent = n; $('#phone-badge').hidden = !n; } catch (_) { /* ignore */ }
   }, 10000);
 }
+
+// ---------------------------------------------------------------- command bar: type a request, Veil asks where, then applies it
+S.ai = null; S.pending = null;
+let cloudArmed = false, cmdBusy = false;
+
+async function loadAI() {
+  try { S.ai = (await (await api('/api/ai')).json()).active; } catch (_) { S.ai = null; }
+  renderAI();
+}
+function renderAI() {
+  const a = S.ai, look = $('#cmd-look');
+  $('#ai-chip').textContent = a ? a.model : 'not set';
+  look.disabled = !a || !a.vision || (remote && !a.local);
+  if (look.disabled) look.checked = false;
+  const online = !!a && !a.local;
+  $('#cmd-look').closest('label').classList.toggle('online', online);
+  $('#cmd-look-label').textContent = !a ? 'Let the model see the photo'
+    : !a.vision ? 'This model cannot see photos'
+    : remote && online ? 'Photos can only be sent online from the computer'
+    : online ? `Send the photo to ${a.name} (online)` : 'Let the model see the photo';
+  disarmCloud();
+}
+function disarmCloud() { cloudArmed = false; $('#cmd-send').textContent = 'Go'; }
+['input', 'change'].forEach((ev) => { $('#cmd-text').addEventListener(ev, disarmCloud); $('#cmd-look').addEventListener(ev, disarmCloud); });
+
+function showReply(text, bad = false, buttons = []) {
+  const box = $('#cmd-reply'); box.hidden = !text; box.classList.toggle('bad', bad);
+  $('#cmd-reply-text').textContent = text || '';
+  const row = $('#cmd-reply-btns'); row.replaceChildren();
+  for (const [label, fn, primary] of buttons) {
+    const b = document.createElement('button'); b.type = 'button'; b.textContent = label;
+    if (primary) b.className = 'primary';
+    b.addEventListener('click', fn); row.append(b);
+  }
+}
+
+function fullAdjust(params) { const p = {}; for (const [k] of SLIDERS) p[k] = Number(params[k]) || 0; return p; }
+
+async function runPlan(plan) {
+  S.pending = null;
+  const note = plan.asked && plan.asked.photo_sent ? ` (the photo was sent to ${plan.asked.provider})` : '';
+  if (plan.action === 'none') return showReply((plan.reply || 'I could not turn that into an edit.') + note);
+  if (!plan.available) return showReply(`I understood: ${plan.label}. That tool is not built yet; it arrives in a later phase. Nothing was changed.`);
+  const done = async (op, params, withMask) => {
+    await edit(op, params, withMask);
+    if (withMask) { resetSelection(); setTool('view'); }
+    showReply(`Done: ${plan.label}. Undo (Ctrl+Z) takes it back.` + note);
+  };
+  if (plan.action === 'rotate90' || plan.action === 'flip' || plan.action === 'straighten') return done(plan.action, plan.params, false);
+  if (plan.action === 'crop') {
+    S.aspect = plan.params.aspect || 'free'; setTool('crop');
+    return showReply('Adjust the crop box, then click Apply crop on the right.' + note);
+  }
+  if (plan.action === 'adjust') {
+    const params = fullAdjust(plan.params);
+    if (hasMask()) return done('adjust', params, true);       // an area is already marked: use it
+    const startArea = (tool) => {
+      setTool(tool); S.pending = plan;
+      const apply = async () => { if (!hasMask()) return toast('Mark an area first.', true); S.pending = null; await done('adjust', params, true); };
+      showReply('Mark the area, then click Apply here.', false, [['Apply here', apply, true], ['Cancel', () => { S.pending = null; resetSelection(); setTool('view'); showReply(''); }]]);
+    };
+    const btns = [];
+    if (plan.region !== 'required') btns.push(['Whole photo', () => done('adjust', params, false), true]);
+    btns.push(['Brush an area', () => startArea('brush')], ['Box an area', () => startArea('box')]);
+    return showReply((plan.reply ? plan.reply + ' ' : '') + 'Where should it apply?' + note, false, btns);
+  }
+  showReply('I could not apply that.', true);
+}
+
+$('#cmd-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const text = $('#cmd-text').value.trim();
+  if (!S.photo || cmdBusy || !text) return;
+  const a = S.ai, look = $('#cmd-look').checked && !!a && a.vision, online = !!a && !a.local;
+  if (look && online && !cloudArmed) {        // sending a photo online is confirmed every single time
+    cloudArmed = true; $('#cmd-send').textContent = 'Confirm: send photo online';
+    return showReply(`This sends the photo to ${a.name} over the internet. Click the button again to confirm, or untick the box to send only your words.`);
+  }
+  cmdBusy = true; $('#cmd-send').disabled = true; disarmCloud();
+  showReply('Thinking… the first request after a while can take longer while the model loads.');
+  try {
+    const plan = await (await postJSON('/api/ai/command', { photo_id: S.photo.id, text, look_at_photo: look, confirm_cloud_photo: look && online })).json();
+    $('#cmd-text').value = ''; if (online) $('#cmd-look').checked = false;
+    await runPlan(plan);
+  } catch (ex) { showReply(ex.message || 'Something went wrong.', true); }
+  finally { cmdBusy = false; $('#cmd-send').disabled = !S.photo; }
+});
+
+// ---------------------------------------------------------------- language-model window (computer only)
+let aiTimer = 0;
+const aiError = (m) => { $('#ai-error').textContent = m || ''; };
+function twoClick(btn, label, fn) {
+  let armed = 0;
+  btn.addEventListener('click', () => {
+    if (!armed) { armed = setTimeout(() => { armed = 0; btn.textContent = label; }, 3000); btn.textContent = 'Sure?'; return; }
+    clearTimeout(armed); armed = 0; btn.textContent = label; fn();
+  });
+}
+async function aiRefresh() {
+  try {
+    const set = await (await api('/api/ai/settings')).json();
+    const list = $('#ai-providers'); list.replaceChildren();
+    for (const p of set.providers) {
+      const li = document.createElement('li'); const meta = document.createElement('div'); meta.className = 'meta';
+      const nm = document.createElement('strong'); nm.textContent = p.name + (p.id === set.active ? ' (in use)' : '');
+      const sub = document.createElement('span'); sub.textContent = `${p.model} · ${p.local ? 'on this computer' : 'online'}${p.has_key ? ' · key saved' : ''}${p.vision ? ' · sees photos' : ''}`;
+      meta.append(nm, sub);
+      const acts = document.createElement('div'); acts.className = 'acts';
+      if (p.id !== set.active) { const use = document.createElement('button'); use.textContent = 'Use'; use.addEventListener('click', () => aiPost('POST', '/api/ai/active', { id: p.id })); acts.append(use); }
+      const ed = document.createElement('button'); ed.textContent = 'Edit'; ed.addEventListener('click', () => {
+        const f = $('#ai-form'); f.kind.value = p.kind; f.name.value = p.name; f.id.value = p.id; f.base_url.value = p.base_url; f.model.value = p.model; f.vision.checked = !!p.vision; f.api_key.value = '';
+      });
+      const rm = document.createElement('button'); rm.textContent = 'Remove'; twoClick(rm, 'Remove', () => aiPost('DELETE', `/api/ai/providers/${encodeURIComponent(p.id)}`));
+      acts.append(ed, rm); li.append(meta, acts); list.append(li);
+    }
+    const m = await (await api('/api/ai/models')).json();
+    $('#ai-models-note').textContent = !m.reachable ? `Could not reach ${m.provider}. Is it running?` : m.can_download ? 'Suggested models by computer power. Download only when you click.' : 'The selected model is not Ollama on this computer, so nothing can be downloaded here.';
+    const tl = $('#ai-tiers'); tl.replaceChildren();
+    for (const t of m.tiers) {
+      const li = document.createElement('li'); const meta = document.createElement('div'); meta.className = 'meta';
+      const nm = document.createElement('strong'); nm.textContent = `${t.tier}: ${t.name}`;
+      const sub = document.createElement('span'); sub.textContent = `${t.hardware} · ${t.license} · ${t.note}`;
+      meta.append(nm, sub); li.append(meta);
+      const acts = document.createElement('div'); acts.className = 'acts';
+      if (t.installed) { const ok = document.createElement('span'); ok.className = 'ok'; ok.textContent = 'Installed'; acts.append(ok); }
+      else if (m.can_download) {
+        const dl = document.createElement('button'); dl.textContent = 'Download'; dl.disabled = m.download.running;
+        dl.addEventListener('click', () => aiPost('POST', '/api/ai/models/pull', { name: t.name }));
+        acts.append(dl);
+      }
+      li.append(acts); tl.append(li);
+    }
+    const d = m.download, dl = $('#ai-dl'); dl.hidden = !(d.running || d.error);
+    dl.textContent = d.error ? d.error : `Downloading ${d.name}: ${d.status}${d.total ? ` ${Math.round(100 * d.done / d.total)}%` : ''}`;
+    if (!d.running) loadAI();
+  } catch (ex) { aiError(ex.message); }
+}
+async function aiPost(method, url, body) {
+  aiError('');
+  try {
+    await api(url, { method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+    await aiRefresh(); await loadAI();
+  } catch (ex) { aiError(ex.message); }
+}
+$('#btn-ai').addEventListener('click', () => {
+  if (remote) return toast(S.ai ? `Commands are read by ${S.ai.name} (${S.ai.model}). Change it on the computer.` : 'No model is set up.');
+  $('#ai-dialog').hidden = false; aiError(''); aiRefresh(); clearInterval(aiTimer); aiTimer = setInterval(aiRefresh, 2000);
+});
+$('#btn-ai-close').addEventListener('click', () => { $('#ai-dialog').hidden = true; clearInterval(aiTimer); });
+$('#ai-form').addEventListener('submit', async (e) => {
+  e.preventDefault(); const f = e.target;
+  await aiPost('PUT', '/api/ai/providers', { id: f.id.value.trim(), name: f.name.value.trim(), kind: f.kind.value, base_url: f.base_url.value.trim(), model: f.model.value.trim(), vision: f.vision.checked, api_key: f.api_key.value });
+  f.api_key.value = '';
+});
+$('#btn-ai-test').addEventListener('click', async () => {
+  aiError(''); const b = $('#btn-ai-test'); b.disabled = true; b.textContent = 'Testing…';
+  try { const r = await (await postJSON('/api/ai/test', {})).json(); toast(`${r.provider} answered (${r.model}).`); }
+  catch (ex) { aiError(ex.message); }
+  finally { b.disabled = false; b.textContent = 'Test the active model'; }
+});
 
 // ---------------------------------------------------------------- start
 buildSliders(); setTool('view'); boot().catch(fail);

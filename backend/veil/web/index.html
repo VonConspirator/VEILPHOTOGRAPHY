@@ -71,6 +71,17 @@
       <button id="btn-logout">Log out</button>
     </header>
 
+    <form id="cmd-form" class="cmdbar" autocomplete="off">
+      <input id="cmd-text" type="text" maxlength="500" placeholder="Tell Veil what to do, for example: make it a bit warmer" aria-label="What would you like to do?" disabled>
+      <label class="check cmd-look"><input type="checkbox" id="cmd-look"> <span id="cmd-look-label">Let the model see the photo</span></label>
+      <button class="primary" id="cmd-send" type="submit" disabled>Go</button>
+      <button type="button" id="btn-ai" title="Which model reads your commands">Model: <span id="ai-chip">…</span></button>
+    </form>
+    <div id="cmd-reply" class="cmdreply" role="status" hidden>
+      <span id="cmd-reply-text"></span>
+      <span id="cmd-reply-btns" class="row"></span>
+    </div>
+
     <div class="workspace">
       <nav class="tools" aria-label="Tools">
         <button data-tool="view" class="on" title="Just look">View</button>
@@ -162,6 +173,32 @@
         <ul id="device-list" class="devices"></ul>
         <p id="phone-error" class="error" role="alert"></p>
         <div class="row"><button id="btn-phone-close">Close</button></div>
+      </div>
+    </div>
+
+    <div id="ai-dialog" class="modal" hidden>
+      <div class="card wide" role="dialog" aria-labelledby="ai-title">
+        <h2 id="ai-title">Language model</h2>
+        <p class="hint">The model only reads your typed request and suggests one edit. It cannot change your photos by itself. Online models get your words only, never the photo, unless you confirm it for that one request.</p>
+        <h3>Use this model</h3>
+        <ul id="ai-providers" class="devices"></ul>
+        <h3>Models on this computer</h3>
+        <p id="ai-models-note" class="hint"></p>
+        <ul id="ai-tiers" class="devices"></ul>
+        <p id="ai-dl" class="hint" hidden></p>
+        <h3>Add or change a model</h3>
+        <form id="ai-form" class="aiform">
+          <label>Type <select name="kind"><option value="ollama">Ollama (on this computer)</option><option value="openai">OpenAI-compatible service</option><option value="anthropic">Anthropic</option></select></label>
+          <label>Name <input name="name" maxlength="60" placeholder="My model"></label>
+          <label>Short id <input name="id" maxlength="32" required placeholder="my-model" pattern="[a-z0-9][a-z0-9\-]{0,31}"></label>
+          <label>Address <input name="base_url" required placeholder="http://127.0.0.1:11434"></label>
+          <label>Model <input name="model" required maxlength="120" placeholder="qwen3-vl:8b"></label>
+          <label>API key <input name="api_key" type="password" autocomplete="off" placeholder="leave empty to keep the saved key"></label>
+          <label class="check"><input type="checkbox" name="vision"> This model can look at photos</label>
+          <div class="row"><button class="primary" type="submit">Save</button><button type="button" id="btn-ai-test">Test the active model</button></div>
+        </form>
+        <p id="ai-error" class="error" role="alert"></p>
+        <div class="row"><button id="btn-ai-close">Close</button></div>
       </div>
     </div>
 

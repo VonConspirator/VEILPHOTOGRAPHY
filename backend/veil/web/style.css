@@ -91,3 +91,12 @@ label.check input { width: auto; }
 .devices .acts { display: flex; gap: 6px; }
 .badge { display: inline-block; min-width: 18px; padding: 0 6px; border-radius: 9px; background: var(--accent); color: var(--accent-text); font-size: 12px; text-align: center; }
 .ok { color: #5fbf8a; } .warn { color: #e0a84a; }
+
+/* command bar and language-model window */
+.cmdbar { display: flex; gap: 8px; align-items: center; padding: 8px 12px; background: var(--panel-2); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.cmdbar #cmd-text { flex: 1 1 280px; min-width: 0; }
+.cmd-look { margin: 0; font-size: 13px; color: var(--muted); } .cmd-look.online span { color: var(--danger); }
+.cmdreply { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 6px 12px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.cmdreply.bad { color: var(--danger); }
+.aiform { display: grid; gap: 8px; margin: 8px 0; }
+.aiform label.check { margin: 4px 0; }
