@@ -137,9 +137,10 @@ def test_parameters_are_clamped_and_unknown_ones_dropped():
 
 
 def test_later_phase_tools_are_understood_but_marked_unavailable():
-    plan = parser.validate({"action": "blur_face", "params": {}})
-    assert plan["available"] is False and plan["region"] == "required"
-    assert all(not actions.ACTIONS[n]["available"] for n in ("blur_face", "pixelate_face", "generate_face", "face_edit", "watermark"))
+    plan = parser.validate({"action": "watermark", "params": {"text": "x"}})
+    assert plan["available"] is False
+    assert not actions.ACTIONS["watermark"]["available"]
+    assert "face_edit" not in actions.ACTIONS                      # replaced by the individual look edits in phase 6
     assert parser.validate({"action": "adjust", "params": {"brightness": 5}})["available"] is True
 
 

@@ -8,7 +8,8 @@ ADJUST_KEYS = ("brightness", "contrast", "saturation", "warmth", "sharpness")
 ASPECTS = ("free", "orig", "1:1", "4:5", "5:4", "3:2", "2:3", "16:9")
 
 # region: "none" = whole photo, "optional" = whole photo unless the user marks an area,
-#         "required" = Veil must ask where (brush or box) before it can apply.
+#         "required" = Veil must ask where (brush or box) before it can apply,
+#         "faces" = Veil finds the faces and the owner ticks which ones (a face is only ever edited from this photo).
 # available: False = understood, but the tool arrives in a later phase.
 ACTIONS: dict[str, dict] = {
     "adjust":    {"label": "Adjust", "region": "optional", "available": True,
@@ -21,14 +22,34 @@ ACTIONS: dict[str, dict] = {
                    "about": "Level the horizon. degrees: -45..45, positive = clockwise."},
     "crop":      {"label": "Crop", "region": "none", "available": True,
                   "about": "Open the crop tool. aspect: one of " + ", ".join(ASPECTS) + "."},
-    "blur_face":        {"label": "Blur a face", "region": "required", "available": False,
-                         "about": "Anonymise a face by blurring it."},
-    "pixelate_face":    {"label": "Pixelate a face", "region": "required", "available": False,
-                         "about": "Anonymise a face by pixelating it."},
-    "generate_face":    {"label": "Replace a face with a generated one", "region": "required", "available": False,
-                         "about": "Anonymise a face with a newly generated face (never one from another photo)."},
-    "face_edit":        {"label": "Edit the face or look", "region": "optional", "available": False,
-                         "about": "Skin, eyes, hair colour and similar look edits. what: short description."},
+    # --- faces (phase 6). region "faces": Veil finds the faces and the owner ticks which ones. Never a face from another photo.
+    "blur_face":        {"label": "Blur a face", "region": "faces", "available": True,
+                         "about": "Anonymise a face by blurring it. amount: 0..100 (default 80)."},
+    "pixelate_face":    {"label": "Pixelate a face", "region": "faces", "available": True,
+                         "about": "Anonymise a face by pixelating it. amount: 0..100 (default 70)."},
+    "generate_face":    {"label": "Replace a face with a generated one", "region": "faces", "available": True,
+                         "about": "Anonymise a face by painting a newly generated, made-up face (never one from another photo). No other settings."},
+    "skin_smooth":      {"label": "Smooth skin", "region": "faces", "available": True,
+                         "about": "Soften skin on the face, keeping some natural texture. amount: 0..100 (default 40)."},
+    "teeth_whiten":     {"label": "Whiten teeth", "region": "faces", "available": True,
+                         "about": "Whiten visible teeth. amount: 0..100 (default 60)."},
+    "eye_color":        {"label": "Change eye colour", "region": "faces", "available": True,
+                         "about": "Recolour the irises. color: blue, green, brown, hazel, grey, amber, violet or #rrggbb."},
+    "eyelash_length":   {"label": "Lengthen eyelashes", "region": "faces", "available": True,
+                         "about": "Longer, fuller upper lashes. amount: 0..100 (default 60)."},
+    "makeup_add":       {"label": "Add makeup", "region": "faces", "available": True,
+                         "about": "Add makeup. part: lips, blush, eyeshadow, eyeliner or face (all of them). color: a name or #rrggbb (optional). amount: 0..100."},
+    "makeup_remove":    {"label": "Remove makeup", "region": "faces", "available": True,
+                         "about": "Remove makeup, leaving a natural face. part: lips, eyes, cheeks or all (default). Needs the optional generative model."},
+    "hair_color":       {"label": "Change hair colour", "region": "faces", "available": True,
+                         "about": "Recolour the hair. color: for example black, brown, blonde, red, auburn, grey, pink, blue, or #rrggbb."},
+    "hairstyle":        {"label": "Change the hairstyle", "region": "faces", "available": True,
+                         "about": "Restyle the hair. style: a few plain words such as curly, wavy, straight with bangs. color: optional. "
+                                  "Works best for texture (curly, wavy); changing the length is unreliable. Needs the optional generative model."},
+    "facial_hair":      {"label": "Add or remove facial hair", "region": "faces", "available": True,
+                         "about": "mode: add or remove. style: stubble, moustache, goatee or beard. Needs the optional generative model."},
+    "remove_jewelry":   {"label": "Remove jewelry", "region": "required", "available": True,
+                         "about": "Remove earrings, a necklace, rings or similar from the photo."},
     "remove_tattoo":    {"label": "Remove a tattoo", "region": "required", "available": True,
                          "about": "Remove a tattoo from the skin."},
     "remove_object":    {"label": "Remove an object", "region": "required", "available": True,
@@ -88,8 +109,48 @@ def clean_params(action: str, raw: object) -> dict:
             out["scene"] = scene
         else:
             out["color"] = "#ffffff"
-    elif action == "face_edit":
-        out["what"] = str(raw.get("what", ""))[:200]
+    elif action in ("blur_face", "pixelate_face", "skin_smooth", "teeth_whiten", "eyelash_length"):
+        v = _clamp(raw.get("amount"), 0, 100)
+        if v is not None:
+            out["amount"] = round(v)
+    elif action == "eye_color":
+        from ..vision.looks import EYE_COLORS
+        from ..vision.ops import parse_color
+        c = str(raw.get("color", "")).strip().lower()
+        out["color"] = c if c in EYE_COLORS else (parse_color(c) or "blue")
+    elif action == "makeup_add":
+        from ..vision.looks import MAKEUP_PARTS, LIP_COLORS
+        from ..vision.ops import parse_color
+        part = str(raw.get("part", "lips")).strip().lower()
+        out["part"] = part if part in MAKEUP_PARTS else "lips"
+        c = str(raw.get("color", "")).strip().lower()
+        col = c if c in LIP_COLORS else parse_color(c)
+        if col:
+            out["color"] = col
+        v = _clamp(raw.get("amount"), 0, 100)
+        if v is not None:
+            out["amount"] = round(v)
+    elif action == "makeup_remove":
+        part = str(raw.get("part", "all")).strip().lower()
+        out["part"] = part if part in ("lips", "eyes", "cheeks", "all") else "all"
+    elif action == "hair_color":
+        from ..vision.looks import HAIR_COLORS
+        from ..vision.ops import parse_color
+        c = str(raw.get("color", "")).strip().lower()
+        out["color"] = c if c in HAIR_COLORS else (parse_color(c) or "")
+    elif action == "hairstyle":
+        import re
+        st = re.sub(r"[^A-Za-z \-]", "", str(raw.get("style", "")))[:40].strip()
+        out["style"] = st
+        c = str(raw.get("color", "")).strip().lower()
+        from ..vision.looks import HAIR_COLORS
+        if c in HAIR_COLORS:
+            out["color"] = c
+    elif action == "facial_hair":
+        from ..vision.looks import FACIAL_HAIR_STYLES
+        out["mode"] = "remove" if str(raw.get("mode", "")).lower().startswith("r") else "add"
+        st = str(raw.get("style", "stubble")).strip().lower()
+        out["style"] = st if st in FACIAL_HAIR_STYLES else "stubble"
     elif action == "watermark":
         out["text"] = str(raw.get("text", ""))[:100]
     return out

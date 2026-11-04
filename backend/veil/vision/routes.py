@@ -43,6 +43,16 @@ def register(app: FastAPI, *, engine: Engine, photos, require_ready, require_own
         call(downloader.start, name)
         return downloader.snapshot()
 
+    @app.post("/api/photos/{photo_id}/faces", dependencies=[Depends(require_ready)])
+    def find_faces(photo_id: str):
+        """Finds the faces so the owner can tick which ones an edit applies to. Boxes are fractions 0..1 of the photo."""
+        img = call(photos.open_current, photo_id)
+        found = call(engine.detect_faces, img)
+        w, h = img.size
+        return {"faces": [{"box": [round(d["box"][0] / w, 5), round(d["box"][1] / h, 5), round(d["box"][2] / w, 5), round(d["box"][3] / h, 5)],
+                           "score": round(d["score"], 3)} for d in found[:20]],
+                "mapped": engine.has("face-landmarker")}
+
     @app.post("/api/photos/{photo_id}/segment", dependencies=[Depends(require_ready)])
     def segment(photo_id: str, req: SegmentRequest):
         if len(req.points) > MAX_POINTS:

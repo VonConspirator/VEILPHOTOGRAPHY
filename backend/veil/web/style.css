@@ -101,3 +101,12 @@ label.check input { width: auto; }
 .aiform { display: grid; gap: 8px; margin: 8px 0; }
 .aiform label.check { margin: 4px 0; }
 input[type=color] { height: 38px; padding: 2px; cursor: pointer; }
+
+/* faces and looks (phase 6) */
+#faces h3 { margin: 14px 0 4px; font-size: 13px; color: var(--muted); font-weight: 600; text-transform: none; }
+#faces label { display: block; margin: 8px 0 4px; }
+#faces button { margin-top: 6px; }
+.facelist { list-style: none; padding: 0; margin: 8px 0; }
+.facelist li { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+.facelist input { width: auto; }
+button.gen::after { content: " \00B7"; font-weight: 700; color: var(--accent); }

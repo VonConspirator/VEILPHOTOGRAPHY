@@ -11,7 +11,10 @@ from ..history import PhotoError
 from .engine import Engine, binarize
 from .registry import ModelError
 
-AI_OPS = ("remove_object", "remove_tattoo", "remove_background", "blur_background", "replace_background")
+IMAGE_OPS = ("remove_object", "remove_tattoo", "remove_background", "blur_background", "replace_background")
+FACE_OPS = ("blur_face", "pixelate_face", "generate_face", "skin_smooth", "teeth_whiten", "eye_color", "eyelash_length",
+            "makeup_add", "makeup_remove", "hair_color", "hairstyle", "facial_hair", "remove_jewelry")      # implemented in looks.py
+AI_OPS = IMAGE_OPS + FACE_OPS
 NEEDS_AREA = ("remove_object", "remove_tattoo")
 COLORS = {"white": "#ffffff", "black": "#000000", "grey": "#808080", "gray": "#808080", "red": "#c0392b", "blue": "#2e5eaa",
           "green": "#2e8b57", "pink": "#e58fb0", "beige": "#d8c3a5", "cream": "#f5efe0", "yellow": "#e6c84a", "purple": "#7d4fa3"}
@@ -57,6 +60,9 @@ def _alpha_keep(src: Image.Image, out: Image.Image) -> Image.Image:
 def run(engine: Engine, op: str, img: Image.Image, params: dict, mask: Image.Image | None) -> Image.Image:
     if engine is None:
         raise PhotoError("The editing models are not set up.")
+    if op in FACE_OPS:
+        from . import looks
+        return looks.run(engine, op, img, params, mask)
     try:
         return _run(engine, op, img, params, mask)
     except ModelError as e:
@@ -116,6 +122,9 @@ def _run(engine: Engine, op: str, img: Image.Image, params: dict, mask: Image.Im
 
 
 def describe(op: str, params: dict) -> str:
+    if op in FACE_OPS:
+        from . import looks
+        return looks.describe(op, params)
     return {"remove_object": "Remove object", "remove_tattoo": "Remove tattoo", "remove_background": "Remove background",
             "blur_background": f"Blur background {int(float(params.get('amount', 50)))}%",
             "replace_background": "Replace background"}[op]

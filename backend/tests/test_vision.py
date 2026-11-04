@@ -185,7 +185,7 @@ def test_new_tools_are_available_actions_and_background_colours_are_cleaned():
     from veil.ai import parser
     for a in ("remove_tattoo", "remove_object", "remove_background", "blur_background", "replace_background"):
         assert parser.validate({"action": a, "params": {}})["available"] is True
-    assert parser.validate({"action": "blur_face"})["available"] is False      # faces are phase 6
+    assert parser.validate({"action": "watermark", "params": {"text": "x"}})["available"] is False      # the watermark is phase 7
     p = parser.validate({"action": "replace_background", "params": {"color": "Beige"}})["params"]
     assert p == {"color": "#d8c3a5"}
     assert parser.validate({"action": "replace_background", "params": {"color": "javascript:alert(1)"}})["params"] == {"color": "#ffffff"}
@@ -198,7 +198,7 @@ def test_new_tools_are_available_actions_and_background_colours_are_cleaned():
 def test_status_lists_models_and_phones_cannot_download(v):
     s = v.c.get("/api/vision").json()
     names = {m["name"]: m for m in s["models"]}
-    assert set(names) == {"sam2", "lama", "birefnet", "sdxl-inpaint"}
+    assert set(names) == {"sam2", "lama", "birefnet", "yunet", "face-landmarker", "sdxl-inpaint"}
     assert names["sdxl-inpaint"]["required"] is False and "RAIL" in names["sdxl-inpaint"]["license"]
     assert names["sam2"]["license"] == "Apache-2.0" and names["birefnet"]["license"] == "MIT"
     w = v.world; w.enable(); w.pair()

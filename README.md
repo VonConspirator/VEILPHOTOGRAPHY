@@ -3,7 +3,7 @@
 A local, private, browser-based photo editor for professional boudoir and portrait
 photographers, and the models they work with. Photos stay on your machine. No telemetry.
 
-> Work in progress: phase 5 of 9. Screenshots, setup steps and hardware
+> Work in progress: phase 6 of 9. Screenshots, setup steps and hardware
 > requirements land with the later phases.
 
 Veil is for photographs of consenting adults. It never swaps in a face from an
@@ -42,11 +42,31 @@ OpenAI-compatible or Anthropic model; then that model's license and terms are yo
 - Python libraries (PyTorch, OpenCV, numpy, timm, einops, kornia, safetensors, sam2 and its helpers)
   keep their own licenses; see each project. PyTorch's NVIDIA CUDA libraries are under NVIDIA's own license.
 
-### Optional: generative fill
+### Face models (find faces, hide faces, look edits)
 
 | Model | Used for | Download | License |
 |---|---|---|---|
-| Stable Diffusion XL Inpainting 0.1 (fp16) | better removal of large areas; new backgrounds from a description | 6.9 GB | CreativeML Open RAIL++-M |
+| YuNet (OpenCV Zoo) `face_detection_yunet_2023mar` | finds faces | 233 KB | MIT |
+| MediaPipe Face Landmarker (`face_landmarker.task`, Google) | maps 478 points on a face (outline, eyes, irises, lips) | 3.8 MB | Apache-2.0 |
+
+- YuNet's SHA-256 matches the one OpenCV Zoo publishes.
+- The Face Landmarker license was read from the three model cards that make up the bundle (BlazeFace
+  detector, Face Mesh V2, Blendshape V2); each says "Licensed under Apache License, Version 2.0".
+  Google publishes no checksum for the file, so the SHA-256 recorded in `registry.py` is the one taken
+  when it was first downloaded.
+- The `mediapipe` Python library (Apache-2.0) is installed with `pip install --no-deps mediapipe`
+  plus `pip install absl-py flatbuffers matplotlib sounddevice cffi` (or `pip install veil-studio[faces]`
+  for the second part). `--no-deps` matters: mediapipe asks for `opencv-contrib-python`, which would
+  overwrite the `opencv-python-headless` Veil already uses.
+- Veil never takes a face from another picture. Nothing in the face tools accepts an image, a reference or
+  an identity of any kind; the generator is only ever given your own photo, a mask and fixed words
+  (tests check this).
+
+### Optional: generative model
+
+| Model | Used for | Download | License |
+|---|---|---|---|
+| Stable Diffusion XL Inpainting 0.1 (fp16) | generated faces, makeup removal, hairstyle and facial hair changes; better removal of large areas; new backgrounds from a description | 6.9 GB | CreativeML Open RAIL++-M |
 
 This model is not downloaded unless you ask for it (Model, then Editing models). It also needs
 `pip install diffusers transformers accelerate`. Its license is **not** Apache/MIT: it

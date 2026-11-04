@@ -20,6 +20,8 @@ dependencies = [
 editing = ["torch>=2.5", "torchvision", "opencv-python-headless", "safetensors", "timm", "einops", "kornia", "sam2>=1.1"]
 # optional generative fill (Stable Diffusion XL Inpainting)
 generative = ["diffusers", "transformers", "accelerate"]
+# face tools: also run `pip install --no-deps mediapipe` (it would otherwise replace opencv-python-headless)
+faces = ["absl-py", "flatbuffers", "matplotlib", "sounddevice", "cffi"]
 dev = ["pytest>=8"]
 
 [tool.setuptools.packages.find]

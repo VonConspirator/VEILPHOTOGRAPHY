@@ -15,6 +15,7 @@ const S = {
   sel: { points: [], boxes: [], brush: null, tint: null, painted: false, erase: false, size: 28 },
   crop: null, aspect: 'free', drag: null,
   compare: false, split: 0.5, holding: false,
+  faces: { list: [], found: false },
   zoom: 1, panX: 0, panY: 0, k0: 1, pointers: new Map(), gesture: null, panning: null, space: false, block: false,
 };
 
@@ -159,7 +160,7 @@ function clearPhoto() { S.photo = null; $('#frame').hidden = true; $('#empty').h
 
 async function openPhoto(id) {
   try { S.photo = await (await api('/api/photos/' + id)).json(); } catch (ex) { return fail(ex); }
-  resetSelection(); S.crop = null; resetSliders(); setTool('view'); S.compare = false; S.zoom = 1; S.panX = S.panY = 0;
+  resetSelection(); clearFaces(); S.crop = null; resetSliders(); setTool('view'); S.compare = false; S.zoom = 1; S.panX = S.panY = 0;
   await refresh(true);
 }
 
@@ -286,6 +287,7 @@ function refreshUI() {
   $('#btn-export').disabled = !has;
   $('#cmd-text').disabled = $('#cmd-send').disabled = !has;
   if (typeof renderCleanup === 'function') renderCleanup();
+  if (typeof renderFaces === 'function') renderFaces();
   $('#btn-straighten').disabled = !has || Number($('#straighten').value) === 0;
   const dirty = SLIDERS.some(([k]) => S.adj[k]);
   $('#btn-adjust-apply').disabled = !has || !dirty; $('#btn-adjust-reset').disabled = !has || !dirty;
@@ -294,7 +296,7 @@ function refreshUI() {
   if (has) p.versions.forEach((v, i) => {
     const li = document.createElement('li'); li.textContent = v.label;
     if (i === p.cursor) li.className = 'cur'; else if (i > p.cursor) li.className = 'undone';
-    li.addEventListener('click', () => step(() => postJSON(`/api/photos/${p.id}/goto`, { cursor: i })));
+    li.addEventListener('click', () => { clearFaces(); step(() => postJSON(`/api/photos/${p.id}/goto`, { cursor: i })); });
     h.append(li);
   });
 }
@@ -303,8 +305,8 @@ function refreshUI() {
 async function step(call) {
   try { S.photo = await (await call()).json(); resetSliders(); await refresh(); return true; } catch (ex) { fail(ex); return false; }
 }
-const undo = () => S.photo && S.photo.cursor > 0 && step(() => postJSON(`/api/photos/${S.photo.id}/undo`, {}));
-const redo = () => S.photo && S.photo.cursor < S.photo.versions.length - 1 && step(() => postJSON(`/api/photos/${S.photo.id}/redo`, {}));
+const undo = () => { if (S.photo && S.photo.cursor > 0) { clearFaces(); return step(() => postJSON(`/api/photos/${S.photo.id}/undo`, {})); } };
+const redo = () => { if (S.photo && S.photo.cursor < S.photo.versions.length - 1) { clearFaces(); return step(() => postJSON(`/api/photos/${S.photo.id}/redo`, {})); } };
 $('#btn-undo').addEventListener('click', undo);
 $('#btn-redo').addEventListener('click', redo);
 document.addEventListener('keydown', (e) => {
@@ -454,6 +456,13 @@ function draw() {
     ctx.beginPath(); ctx.arc(p.x * W, p.y * H, 9, 0, Math.PI * 2); ctx.fillStyle = p.label === 0 ? '#555' : '#c4577e'; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = '#fff'; ctx.stroke();
     ctx.fillStyle = '#fff'; ctx.font = 'bold 11px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(String(i + 1), p.x * W, p.y * H + 0.5);
   });
+  S.faces.list.forEach((f, i) => {
+    const [x0, y0, x1, y1] = f.box; ctx.lineWidth = 2; ctx.setLineDash(f.on ? [] : [5, 4]);
+    ctx.strokeStyle = f.on ? '#fff' : 'rgba(255,255,255,.55)'; ctx.fillStyle = f.on ? 'rgba(196,87,126,.22)' : 'rgba(0,0,0,.12)';
+    ctx.fillRect(x0 * W, y0 * H, (x1 - x0) * W, (y1 - y0) * H); ctx.strokeRect(x0 * W, y0 * H, (x1 - x0) * W, (y1 - y0) * H); ctx.setLineDash([]);
+    ctx.fillStyle = f.on ? '#c4577e' : '#555'; ctx.fillRect(x0 * W, y0 * H - 18, 22, 18); ctx.fillStyle = '#fff'; ctx.font = 'bold 12px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(String(i + 1), x0 * W + 11, y0 * H - 8.5);
+  });
   if (S.tool === 'crop' && S.crop) {
     const r = S.crop; ctx.fillStyle = 'rgba(0,0,0,.55)';
     ctx.fillRect(0, 0, W, r.y0 * H); ctx.fillRect(0, r.y1 * H, W, H - r.y1 * H);
@@ -533,6 +542,7 @@ document.querySelectorAll('.tools button').forEach((b) => b.addEventListener('cl
 async function edit(op, params, withMask = false) {
   const p = S.photo; if (!p) return false;
   const mask = withMask ? selectionMask() : null;
+  if (['crop', 'rotate90', 'flip', 'straighten'].includes(op)) clearFaces();   // the boxes would no longer line up
   return step(() => postJSON(`/api/photos/${p.id}/edit`, { op, params, mask }));
 }
 async function applyCrop() {
@@ -698,6 +708,7 @@ function renderCleanup() {
   $('#cleanup-status').textContent = !v ? 'Could not check the editing models.'
     : ok ? 'Editing models are ready.' : (!v.libraries ? 'The editing libraries are not installed.' : 'Some editing models are not downloaded yet.') + (remote ? ' Set them up on the computer.' : ' Open Model, then Editing models.');
   document.querySelectorAll('#cleanup button').forEach((b) => { b.dataset.needs = '1'; b.disabled = !ok || !S.photo || aiBusy; });
+  if (typeof renderFaces === 'function') renderFaces();
 }
 let aiBusy = false;
 async function smartSelect(body) {
@@ -733,6 +744,67 @@ $('#btn-remove-bg').addEventListener('click', () => aiEdit('remove_background', 
 $('#btn-blur-bg').addEventListener('click', () => aiEdit('blur_background', { amount: Number($('#blur-amount').value) }, true));
 $('#btn-replace-bg').addEventListener('click', () => aiEdit('replace_background', { color: $('#bg-color').value }, true));
 $('#blur-amount').addEventListener('input', () => { $('#out-blur').textContent = $('#blur-amount').value; });
+
+
+// ---------------------------------------------------------------- faces and looks (phase 6)
+function clearFaces() { S.faces = { list: [], found: false }; if (typeof renderFaces === 'function') renderFaces(); }
+function renderFaces() {
+  const v = S.vision, libs = !!v && v.faces_libs && v.models.filter((m) => ['yunet', 'face-landmarker'].includes(m.name)).every((m) => m.installed);
+  const gen = !!v && v.generative_libs && v.models.some((m) => m.name === 'sdxl-inpaint' && m.installed);
+  const has = !!S.photo, n = S.faces.list.filter((f) => f.on).length;
+  $('#faces-status').textContent = !v ? '' : !libs ? 'The face models are not installed yet.' + (remote ? '' : ' Open Model, then Editing models.')
+    : !S.faces.found ? 'Click Find faces, then tick the faces an edit should change.'
+    : S.faces.list.length ? `${S.faces.list.length} found, ${n} ticked.` : 'No faces were found in this photo.';
+  $('#btn-find-faces').disabled = !libs || !has || aiBusy;
+  document.querySelectorAll('#faces .face-btn').forEach((b) => { b.disabled = !libs || !has || aiBusy || !n || (b.classList.contains('gen') && !gen); b.title = b.classList.contains('gen') && !gen ? 'Needs the optional Stable Diffusion XL download (Model, then Editing models).' : ''; });
+  $('#btn-remove-jewelry').disabled = !(!!v && v.ready) || !has || aiBusy;
+  const ul = $('#face-list'); ul.replaceChildren();
+  S.faces.list.forEach((f, i) => {
+    const li = document.createElement('li'), cb = document.createElement('input'), lab = document.createElement('label');
+    cb.type = 'checkbox'; cb.checked = f.on; cb.id = 'face-' + i; lab.htmlFor = cb.id; lab.textContent = `Face ${i + 1}`;
+    cb.addEventListener('change', () => { f.on = cb.checked; renderFaces(); draw(); });
+    li.append(cb, lab); ul.append(li);
+  });
+}
+async function findFaces() {
+  const p = S.photo; if (!p || aiBusy) return false;
+  aiBusy = true; renderCleanup(); renderFaces(); toast('Looking for faces…');
+  try {
+    const d = await (await postJSON(`/api/photos/${p.id}/faces`, {})).json();
+    S.faces = { found: true, list: d.faces.map((f) => ({ box: f.box, on: true })) };
+    toast(d.faces.length ? `Found ${d.faces.length} face${d.faces.length > 1 ? 's' : ''}.` : 'No faces found.', !d.faces.length);
+    return d.faces.length > 0;
+  } catch (ex) { fail(ex); return false; }
+  finally { aiBusy = false; renderCleanup(); renderFaces(); draw(); }
+}
+const ticked = () => S.faces.list.filter((f) => f.on).map((f) => f.box);
+async function faceEdit(op, params, useSelection = false) {
+  if (!ticked().length) { toast('Tick at least one face first (Find faces).', true); return false; }
+  if (aiBusy) return false;
+  aiBusy = true; renderCleanup(); renderFaces(); toast('Working… generated edits can take up to a minute.');
+  try {
+    const ok = await edit(op, { ...params, faces: ticked() }, useSelection && hasMask());
+    if (ok) { if (useSelection && hasMask()) { resetSelection(); setTool('view'); } toast('Done. Undo takes it back.'); }
+    return ok;
+  } finally { aiBusy = false; renderCleanup(); renderFaces(); draw(); }
+}
+$('#btn-find-faces').addEventListener('click', findFaces);
+$('#hide-amount').addEventListener('input', () => { $('#out-hide').textContent = $('#hide-amount').value; });
+$('#skin-amount').addEventListener('input', () => { $('#out-skin').textContent = $('#skin-amount').value; });
+$('#lash-amount').addEventListener('input', () => { $('#out-lash').textContent = $('#lash-amount').value; });
+$('#btn-blur-face').addEventListener('click', () => faceEdit('blur_face', { amount: Number($('#hide-amount').value) }));
+$('#btn-pixelate-face').addEventListener('click', () => faceEdit('pixelate_face', { amount: Number($('#hide-amount').value) }));
+$('#btn-generate-face').addEventListener('click', () => faceEdit('generate_face', {}));
+$('#btn-skin-smooth').addEventListener('click', () => faceEdit('skin_smooth', { amount: Number($('#skin-amount').value) }));
+$('#btn-teeth-whiten').addEventListener('click', () => faceEdit('teeth_whiten', {}));
+$('#btn-eye-color').addEventListener('click', () => faceEdit('eye_color', { color: $('#eye-color').value }));
+$('#btn-eyelash').addEventListener('click', () => faceEdit('eyelash_length', { amount: Number($('#lash-amount').value) }));
+$('#btn-makeup-add').addEventListener('click', () => { const part = $('#makeup-part').value; faceEdit('makeup_add', part === 'face' ? { part } : { part, color: $('#makeup-color').value }); });
+$('#btn-makeup-remove').addEventListener('click', () => faceEdit('makeup_remove', { part: 'all' }));
+$('#btn-hair-color').addEventListener('click', () => faceEdit('hair_color', { color: $('#hair-color').value }, true));
+$('#btn-hairstyle').addEventListener('click', () => { const style = $('#hair-style').value.trim(); if (!style) return toast('Describe the style first, for example: curly.', true); faceEdit('hairstyle', { style }, true); });
+$('#btn-facial-hair').addEventListener('click', () => faceEdit('facial_hair', { mode: $('#fh-mode').value, style: $('#fh-style').value }));
+$('#btn-remove-jewelry').addEventListener('click', () => needArea() && aiEdit('remove_jewelry', {}, true));
 
 // ---------------------------------------------------------------- command bar: type a request, Veil asks where, then applies it
 S.ai = null; S.pending = null;
@@ -803,7 +875,15 @@ async function runPlan(plan) {
     if (hasMask()) return done('adjust', params, true);       // an area is already marked: use it
     return askArea('adjust', params, true);
   }
-  if (plan.action === 'remove_tattoo' || plan.action === 'remove_object') {
+  if (plan.region === 'faces') {
+    showReply('Looking for faces…');
+    const found = await findFaces();
+    if (!found) return showReply('I could not find a face to change. Nothing was changed.', true);
+    const go = async () => { S.pending = null; const ok = await faceEdit(plan.action, plan.params, ['hair_color', 'hairstyle'].includes(plan.action)); finish(ok); };
+    S.pending = plan;
+    return showReply(`I found ${S.faces.list.length} face${S.faces.list.length > 1 ? 's' : ''}, numbered on the photo. Untick any you do not want changed (right panel), then click Apply.` + note, false, [['Apply', go, true], ['Cancel', () => { S.pending = null; clearFaces(); showReply(''); }]]);
+  }
+  if (plan.action === 'remove_tattoo' || plan.action === 'remove_object' || plan.action === 'remove_jewelry') {
     if (hasMask()) { aiBusy = true; renderCleanup(); try { return await done(plan.action, {}, true); } finally { aiBusy = false; renderCleanup(); } }
     return askArea(plan.action, {}, false);
   }
@@ -893,7 +973,7 @@ async function visionRefresh() {
     const nm = document.createElement('strong'); nm.textContent = `${m.label}${m.required ? '' : ' (optional)'}`;
     const sub = document.createElement('span'); sub.textContent = `${m.use} · ${fmtSize(m.size)} · ${m.license}`;
     meta.append(nm, sub);
-    if (m.extra_packages && !v.generative_libs) { const x = document.createElement('span'); x.textContent = `Also needs: pip install ${m.extra_packages}`; meta.append(x); }
+    if (m.extra_packages && m.libs_ok === false) { const x = document.createElement('span'); x.textContent = `Also needs: pip install ${m.extra_packages}`; meta.append(x); }
     li.append(meta);
     const acts = document.createElement('div'); acts.className = 'acts';
     if (m.installed) { const ok = document.createElement('span'); ok.className = 'ok'; ok.textContent = 'Installed'; acts.append(ok); }

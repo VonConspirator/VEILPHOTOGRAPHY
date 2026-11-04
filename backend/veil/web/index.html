@@ -141,6 +141,65 @@
           <button id="btn-replace-bg" disabled>Replace background</button>
         </section>
 
+        <section id="faces">
+          <h2>Faces and looks</h2>
+          <p id="faces-status" class="hint"></p>
+          <button id="btn-find-faces" disabled>Find faces</button>
+          <ul id="face-list" class="facelist"></ul>
+          <p class="hint">Edits here change only the faces ticked above, using this photo alone. Veil never puts a face from another picture into your photo.</p>
+
+          <h3>Hide a face</h3>
+          <label class="slider">Strength <output id="out-hide">70</output>
+            <input id="hide-amount" type="range" min="0" max="100" value="70"></label>
+          <div class="row wrap">
+            <button class="face-btn" id="btn-blur-face">Blur</button>
+            <button class="face-btn" id="btn-pixelate-face">Pixelate</button>
+            <button class="face-btn gen" id="btn-generate-face">Generated face</button>
+          </div>
+
+          <h3>Skin, teeth, eyes</h3>
+          <label class="slider">Skin smoothing <output id="out-skin">40</output>
+            <input id="skin-amount" type="range" min="0" max="100" value="40"></label>
+          <div class="row wrap">
+            <button class="face-btn" id="btn-skin-smooth">Smooth skin</button>
+            <button class="face-btn" id="btn-teeth-whiten">Whiten teeth</button>
+          </div>
+          <label>Eye colour
+            <select id="eye-color"><option>blue</option><option>green</option><option>brown</option><option>hazel</option><option>grey</option><option>amber</option><option>violet</option></select></label>
+          <button class="face-btn" id="btn-eye-color">Change eye colour</button>
+          <label class="slider">Eyelash length <output id="out-lash">60</output>
+            <input id="lash-amount" type="range" min="0" max="100" value="60"></label>
+          <button class="face-btn" id="btn-eyelash">Lengthen eyelashes</button>
+
+          <h3>Makeup</h3>
+          <label>Add
+            <select id="makeup-part"><option value="lips">Lipstick</option><option value="blush">Blush</option><option value="eyeshadow">Eyeshadow</option><option value="eyeliner">Eyeliner</option><option value="face">Full face</option></select></label>
+          <label class="slider">Colour (not for full face) <input id="makeup-color" type="color" value="#b3202a"></label>
+          <div class="row wrap">
+            <button class="face-btn" id="btn-makeup-add">Add makeup</button>
+            <button class="face-btn gen" id="btn-makeup-remove">Remove makeup</button>
+          </div>
+
+          <h3>Hair and facial hair</h3>
+          <p class="hint">For hair, Veil finds it itself. To be exact, click the hair with the Point tool first and Veil uses your selection.</p>
+          <label>Hair colour
+            <select id="hair-color"><option>black</option><option>brown</option><option>blonde</option><option>red</option><option>auburn</option><option>grey</option><option>white</option><option>pink</option><option>blue</option><option>purple</option></select></label>
+          <button class="face-btn" id="btn-hair-color">Change hair colour</button>
+          <label>Hairstyle <input id="hair-style" maxlength="40" placeholder="curly, wavy, loose curls…"></label>
+          <button class="face-btn gen" id="btn-hairstyle">Change hairstyle</button>
+          <p class="hint">Hairstyle changes texture well (curly, wavy). Changing the length is unreliable.</p>
+          <div class="row wrap">
+            <select id="fh-mode"><option value="add">Add</option><option value="remove">Remove</option></select>
+            <select id="fh-style"><option>stubble</option><option>moustache</option><option>goatee</option><option>beard</option></select>
+          </div>
+          <button class="face-btn gen" id="btn-facial-hair">Facial hair</button>
+
+          <h3>Jewelry</h3>
+          <p class="hint">Select the earring, chain or ring first (Point tool: click it).</p>
+          <button id="btn-remove-jewelry" disabled>Remove jewelry</button>
+          <p class="hint">Buttons marked with a dot use the optional generative model and take 20-60 seconds.</p>
+        </section>
+
         <section>
           <h2>Rotate and flip</h2>
           <div class="row wrap">
