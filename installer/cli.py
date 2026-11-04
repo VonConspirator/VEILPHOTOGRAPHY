@@ -110,6 +110,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--desktop-entry", dest="desktop", action="store_true", default=None, help="add Veil to the application menu")
     p.add_argument("--no-desktop-entry", dest="desktop", action="store_false")
     p.add_argument("--force", action="store_true", help="continue even if the disk looks too small")
+    p.add_argument("--unlocked", action="store_true", help="install the newest compatible libraries WITHOUT the hash-checked list (only for a Python the list does not cover)")
     p.add_argument("--worker", action="store_true", help="set this computer up as a GPU worker for your other computer (no Ollama, Tailscale required)")
     p.add_argument("--uninstall", action="store_true", help="remove what the installer set up (never your photos)")
     return p
@@ -142,6 +143,7 @@ def questions(args, h, reg, repo: Path) -> plan.Choices:
     c = plan.Choices(models_dir=args.models_dir or str(repo / "models"), data_dir=args.data_dir or str(repo / "data"))
     c.cpu = bool(args.cpu) or not h.gpus
     c.worker = bool(args.worker)
+    c.unlocked = bool(args.unlocked)
     interactive = sys.stdin.isatty() and not args.yes
     say("\nA few questions")
     # 1. what for
@@ -270,7 +272,13 @@ def run_steps(args, h, reg, c, p, r, repo: Path, venv: Path) -> int:
     if system.libs_ready(py) and not r.dry_run:
         say("  The libraries are already installed and load correctly.")
     else:
-        system.install_libs(r, py, repo, cpu=c.cpu, sdxl=c.sdxl and not c.cpu)
+        system.install_libs(r, py, repo, cpu=c.cpu, sdxl=c.sdxl and not c.cpu, unlocked=c.unlocked)
+        if not c.unlocked and not r.dry_run:
+            main = plan.lock_for(sys.version_info[1], c.cpu, c.sdxl and not c.cpu)[0]
+            wrong = system.lock_mismatches(py, main)
+            if wrong:
+                raise system.StepError("The installed libraries do not match the hash-checked list:\n    " + "\n    ".join(wrong[:8]))
+            say(f"  Checked: every library installed is exactly the version pinned in lock/{main.parent.name}/{main.name}.")
     say("\n3/6  Models (each file is checked against its recorded SHA-256)")
     names = list(t["models"]) + (["sdxl-inpaint"] if c.sdxl and not c.cpu else [])
     for n in names:

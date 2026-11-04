@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -17,9 +18,29 @@ def load_registry():
     return mod
 
 
+LOCK_DIR = ROOT / "lock"
+
+
+def lock_manifest() -> dict:
+    try:
+        return json.loads((LOCK_DIR / "MANIFEST.json").read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def lock_for(minor: int, cpu: bool, sdxl: bool):
+    """(the hash-checked list of libraries, the hash-checked source-only list) for this Python, or None if Veil has none for it."""
+    entry = lock_manifest().get("pythons", {}).get(f"3.{minor}")
+    if not entry:
+        return None
+    d = LOCK_DIR / entry["dir"]
+    main = d / ("cpu.lock" if cpu else "gpu-sdxl.lock" if sdxl else "gpu.lock")
+    return (main, d / "source.lock") if main.is_file() and (d / "source.lock").is_file() else None
+
+
 GB = 1e9
 # Sizes measured on 2026-11-04 (PyPI file sizes for the NVIDIA build; the CPU figure is an estimate).
-LIBS_GPU = {"download": 3.15 * GB, "installed": 6.1 * GB, "note": "PyTorch with NVIDIA CUDA libraries (2.4 GB of it), OpenCV, FastAPI, diffusers and others"}
+LIBS_GPU = {"download": 3.15 * GB, "installed": 6.1 * GB, "note": "PyTorch with NVIDIA CUDA libraries (2.4 GB of it), OpenCV, MediaPipe, FastAPI and others"}
 LIBS_CPU = {"download": 0.4 * GB, "installed": 1.3 * GB, "note": "PyTorch (CPU build), OpenCV, FastAPI and others (size estimated)"}
 MEDIAPIPE = 43 * 1e6
 OLLAMA = {
@@ -51,6 +72,7 @@ class Choices:
     llm: str = "ollama"            # ollama | online | none
     tailscale: bool = False
     cpu: bool = False
+    unlocked: bool = False         # install the newest libraries without the hash-checked list (for a Python the lock does not cover)
     worker: bool = False           # set this computer up as a GPU worker for another computer (no language model, Tailscale required)
     models_dir: str = ""
     data_dir: str = ""
@@ -114,10 +136,15 @@ def build(hw, reg, choices: Choices, libs_present: bool = False) -> Plan:
         else:
             plan.items.append(Item("system", "System packages you install yourself: " + ", ".join(missing), 0, "your distribution's licenses", "your distribution",
                                    "the installer prints the command to run, then stops", need_sudo=True, key=" ".join(missing)))
-    plan.items.append(Item("libs", "Python libraries" + (" (NVIDIA build)" if gpu else " (CPU build)"), libs["download"],
+    locked = (not choices.unlocked) and lock_for(hw.python[1], not gpu, choices.sdxl and gpu) is not None
+    lib_note = libs["note"] + ("; every file is checked against a recorded SHA-256" if locked else "; NOT hash-checked" if choices.unlocked else "")
+    if not locked and not choices.unlocked:
+        plan.warnings.append(f"Veil has no hash-checked library list for Python {hw.python[0]}.{hw.python[1]}; the install will stop and tell you what to do (or use --unlocked).")
+    plan.items.append(Item("libs", "Python libraries" + (" (NVIDIA build)" if gpu else " (CPU build)"), libs["download"] + (MEDIAPIPE if locked else 0),
                            ("PyTorch BSD-3, NVIDIA CUDA libraries under NVIDIA's license, most others Apache-2.0/MIT/BSD" if gpu else "PyTorch BSD-3, most others Apache-2.0/MIT/BSD"), "pypi.org" + ("" if gpu else " and download.pytorch.org"),
-                           libs["note"], have=libs_present, key="gpu" if gpu else "cpu"))
-    plan.items.append(Item("libs", "MediaPipe library", MEDIAPIPE, "Apache-2.0", "pypi.org", "installed without its OpenCV dependency, as Veil needs", key="mediapipe"))
+                           lib_note, have=libs_present, key="gpu" if gpu else "cpu"))
+    if not locked:      # with the hash-checked list MediaPipe is part of it (listed without its OpenCV dependency)
+        plan.items.append(Item("libs", "MediaPipe library", MEDIAPIPE, "Apache-2.0", "pypi.org", "installed without its OpenCV dependency, as Veil needs", key="mediapipe"))
     names = list(t["models"]) + (["sdxl-inpaint"] if choices.sdxl and gpu else [])
     for n in names:
         m = reg.MODELS[n]

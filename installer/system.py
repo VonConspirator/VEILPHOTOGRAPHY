@@ -134,14 +134,76 @@ def libs_ready(py: Path) -> bool:
     return subprocess.run([str(py), "-I", "-c", code], capture_output=True).returncode == 0
 
 
-def install_libs(r: Runner, py: Path, repo: Path, cpu: bool, sdxl: bool) -> None:
+lock_manifest = plan.lock_manifest
+lock_for = plan.lock_for
+
+
+def lock_pins(path: Path) -> dict[str, str]:
+    """name -> version for every pinned line of a lock file."""
+    out = {}
+    for line in path.read_text().splitlines():
+        m = re.match(r"^([A-Za-z0-9][A-Za-z0-9._-]*)==([^\s\\]+)", line)
+        if m:
+            out[re.sub(r"[-_.]+", "-", m.group(1)).lower()] = m.group(2)
+    return out
+
+
+def purelib(py: Path) -> Path:
+    out = subprocess.run([str(py), "-I", "-c", "import sysconfig; print(sysconfig.get_paths()['purelib'])"], capture_output=True, text=True)
+    return Path(out.stdout.strip())
+
+
+def install_libs(r: Runner, py: Path, repo: Path, cpu: bool, sdxl: bool, unlocked: bool = False, minor: int | None = None) -> None:
+    """Installs the libraries. By default from a hash-checked list: pip refuses any file whose SHA-256 is not in it."""
     pip = [str(py), "-m", "pip", "install", "--no-cache-dir", "--disable-pip-version-check"]
+    minor = minor or sys.version_info[1]
+    locks = None if unlocked else lock_for(minor, cpu, sdxl)
+    if locks is None and not unlocked:
+        have = ", ".join(sorted(lock_manifest().get("pythons", {}))) or "none"
+        raise StepError(f"Veil has no hash-checked library list for Python 3.{minor} (it has: {have}). Use a supported Python (Ubuntu 24.04 and Linux Mint 22 "
+                        "ship 3.12), or run the installer again with --unlocked to install the newest compatible libraries WITHOUT hash checking.")
+    if locks is not None:
+        main, source = locks
+        r.say(f"  Every file below is checked against the SHA-256 recorded in lock/{main.parent.name}/{main.name}.")
+        r.run([*pip, "--require-hashes", "--no-deps", "--only-binary=:all:", "-r", str(main)],
+              why="Installing the libraries (this is the longest step). pip refuses anything whose SHA-256 is not on the list.", quiet=True)
+        r.run([*pip, "--require-hashes", "--no-deps", "--no-build-isolation", "-r", str(source)], env={"SAM2_BUILD_CUDA": "0"},
+              why="Building the three source-only libraries from hash-checked source (using the tools just installed).", quiet=True)
+        write_pth(r, py, repo)
+        return
+    r.say("  --unlocked: installing the newest compatible libraries. NOTHING here is hash-checked beyond what pip's index offers.")
     r.run([*pip, "--upgrade", "pip"], why="Updating pip inside Veil's environment.", quiet=True)
     if cpu:
         r.run([*pip, "torch", "torchvision", "--index-url", "https://download.pytorch.org/whl/cpu"], why="Installing PyTorch (CPU build).", quiet=True)
     extras = "editing,faces" + (",generative" if sdxl else "")
     r.run([*pip, "-e", f"{repo}[{extras}]"], why="Installing Veil and its libraries (this is the longest step).", quiet=True)
     r.run([*pip, "--no-deps", "mediapipe"], why="Installing MediaPipe without its OpenCV dependency.", quiet=True)
+
+
+def write_pth(r: Runner, py: Path, repo: Path) -> None:
+    """Makes `import veil` find the program in this folder. (A .pth file: no build step, nothing downloaded.)"""
+    target = Path(repo).resolve() / "backend"
+    r.say(f"  Pointing Veil's environment at the program in {target} (a one-line .pth file; nothing downloaded).")
+    if r.dry_run:
+        return
+    pth = purelib(py) / "veil-studio.pth"
+    pth.write_text(str(target) + "\n")
+
+
+def lock_mismatches(py: Path, lockfile: Path) -> list[str]:
+    """Compares what is installed with what the lock file pins. Empty list = identical."""
+    code = ("import importlib.metadata as m, json, sys\n"
+            "print(json.dumps({d.metadata['Name'].lower().replace('_','-').replace('.','-'): d.version for d in m.distributions()}))")
+    out = subprocess.run([str(py), "-I", "-c", code], capture_output=True, text=True)
+    try:
+        have = json.loads(out.stdout)
+    except ValueError:
+        return ["could not read the installed libraries"]
+    bad = []
+    for n, v in lock_pins(lockfile).items():
+        if have.get(n) != v:
+            bad.append(f"{n}: the list says {v}, installed is {have.get(n, 'missing')}")
+    return bad
 
 
 def self_check(py: Path, repo: Path, models_dir: Path, tier_models: list[str]) -> list[str]:

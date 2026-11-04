@@ -507,7 +507,7 @@ def test_dry_run_for_each_tier_and_cpu(tmp_path):
         r = run_installer(tmp_path, "--dry-run", "--yes", *extra, "--models-dir", str(tmp_path / "m"), "--data-dir", str(tmp_path / "d"))
         assert r.returncode == 0, (extra, r.stdout[-600:], r.stderr[-300:])
     cpu = run_installer(tmp_path, "--dry-run", "--yes", "--tier", "Minimum", "--cpu", "--models-dir", str(tmp_path / "m"), "--data-dir", str(tmp_path / "d"))
-    assert "CPU build" in cpu.stdout and "download.pytorch.org/whl/cpu" in cpu.stdout and "SAM" not in cpu.stdout.replace("Segment", "")
+    assert "CPU build" in cpu.stdout and "lock/py312/cpu.lock" in cpu.stdout and "--require-hashes" in cpu.stdout and "SAM" not in cpu.stdout.replace("Segment", "")
     assert "tiny" in cpu.stdout and "BiRefNet lite" in cpu.stdout
 
 

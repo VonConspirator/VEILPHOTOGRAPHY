@@ -1,0 +1,17 @@
+{
+ "format": 1,
+ "platform": "linux-x86_64",
+ "pythons": {
+  "3.12": {
+   "dir": "py312",
+   "generated": "2026-11-04",
+   "torch": "2.15.0",
+   "files": [
+    "gpu.lock",
+    "gpu-sdxl.lock",
+    "cpu.lock",
+    "source.lock"
+   ]
+  }
+ }
+}
