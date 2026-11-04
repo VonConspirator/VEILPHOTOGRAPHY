@@ -15,7 +15,7 @@ const S = {
   sel: { points: [], boxes: [], brush: null, tint: null, painted: false, erase: false, size: 28 },
   crop: null, aspect: 'free', drag: null,
   compare: false, split: 0.5, holding: false,
-  faces: { list: [], found: false },
+  faces: { list: [], found: false }, faceAt: {},
   zoom: 1, panX: 0, panY: 0, k0: 1, pointers: new Map(), gesture: null, panning: null, space: false, block: false,
 };
 
@@ -160,7 +160,7 @@ function clearPhoto() { S.photo = null; $('#frame').hidden = true; $('#empty').h
 
 async function openPhoto(id) {
   try { S.photo = await (await api('/api/photos/' + id)).json(); } catch (ex) { return fail(ex); }
-  resetSelection(); clearFaces(); S.crop = null; resetSliders(); setTool('view'); S.compare = false; S.zoom = 1; S.panX = S.panY = 0;
+  resetSelection(); clearFaces(); S.faceAt = {}; S.crop = null; resetSliders(); setTool('view'); S.compare = false; S.zoom = 1; S.panX = S.panY = 0;
   await refresh(true);
 }
 
@@ -296,17 +296,28 @@ function refreshUI() {
   if (has) p.versions.forEach((v, i) => {
     const li = document.createElement('li'); li.textContent = v.label;
     if (i === p.cursor) li.className = 'cur'; else if (i > p.cursor) li.className = 'undone';
-    li.addEventListener('click', () => { clearFaces(); step(() => postJSON(`/api/photos/${p.id}/goto`, { cursor: i })); });
+    li.addEventListener('click', () => { step(() => postJSON(`/api/photos/${p.id}/goto`, { cursor: i }), 'nav'); });
     h.append(li);
   });
 }
 
 // ---------------------------------------------------------------- history buttons
-async function step(call) {
-  try { S.photo = await (await call()).json(); resetSliders(); await refresh(); return true; } catch (ex) { fail(ex); return false; }
+// Found faces and ticks are remembered per version, so Undo and Redo bring them back. 'nav' = undo/redo/history,
+// 'edit' = a change that keeps the framing (the boxes stay valid), 'geom' = crop/rotate/flip/straighten (they would not line up).
+function snapFaces() { if (S.photo) S.faceAt[S.photo.cursor] = S.faces.found ? { found: true, list: S.faces.list.map((f) => ({ box: f.box, on: f.on })) } : null; }
+async function step(call, how = 'edit') {
+  const from = S.photo ? S.photo.cursor : 0;
+  snapFaces();
+  try { S.photo = await (await call()).json(); } catch (ex) { fail(ex); return false; }
+  const to = S.photo.cursor, snap = S.faceAt[how === 'nav' ? to : from];
+  if (how !== 'nav') for (const k of Object.keys(S.faceAt)) if (Number(k) > from) delete S.faceAt[k];    // the undone branch is gone
+  if (how === 'geom') S.faces = { list: [], found: false };
+  else S.faces = snap ? { found: true, list: snap.list.map((f) => ({ box: f.box, on: f.on })) } : { list: [], found: false };
+  if (how !== 'nav') S.faceAt[to] = how === 'geom' ? null : snap || null;
+  try { resetSliders(); renderFaces(); await refresh(); return true; } catch (ex) { fail(ex); return false; }
 }
-const undo = () => { if (S.photo && S.photo.cursor > 0) { clearFaces(); return step(() => postJSON(`/api/photos/${S.photo.id}/undo`, {})); } };
-const redo = () => { if (S.photo && S.photo.cursor < S.photo.versions.length - 1) { clearFaces(); return step(() => postJSON(`/api/photos/${S.photo.id}/redo`, {})); } };
+const undo = () => { if (S.photo && S.photo.cursor > 0) return step(() => postJSON(`/api/photos/${S.photo.id}/undo`, {}), 'nav'); };
+const redo = () => { if (S.photo && S.photo.cursor < S.photo.versions.length - 1) return step(() => postJSON(`/api/photos/${S.photo.id}/redo`, {}), 'nav'); };
 $('#btn-undo').addEventListener('click', undo);
 $('#btn-redo').addEventListener('click', redo);
 document.addEventListener('keydown', (e) => {
@@ -542,8 +553,8 @@ document.querySelectorAll('.tools button').forEach((b) => b.addEventListener('cl
 async function edit(op, params, withMask = false) {
   const p = S.photo; if (!p) return false;
   const mask = withMask ? selectionMask() : null;
-  if (['crop', 'rotate90', 'flip', 'straighten'].includes(op)) clearFaces();   // the boxes would no longer line up
-  return step(() => postJSON(`/api/photos/${p.id}/edit`, { op, params, mask }));
+  const geom = ['crop', 'rotate90', 'flip', 'straighten'].includes(op);
+  return step(() => postJSON(`/api/photos/${p.id}/edit`, { op, params, mask }), geom ? 'geom' : 'edit');
 }
 async function applyCrop() {
   const c = S.crop; if (!c) return;
@@ -762,7 +773,7 @@ function renderFaces() {
   S.faces.list.forEach((f, i) => {
     const li = document.createElement('li'), cb = document.createElement('input'), lab = document.createElement('label');
     cb.type = 'checkbox'; cb.checked = f.on; cb.id = 'face-' + i; lab.htmlFor = cb.id; lab.textContent = `Face ${i + 1}`;
-    cb.addEventListener('change', () => { f.on = cb.checked; renderFaces(); draw(); });
+    cb.addEventListener('change', () => { f.on = cb.checked; snapFaces(); renderFaces(); draw(); });
     li.append(cb, lab); ul.append(li);
   });
 }
@@ -771,7 +782,7 @@ async function findFaces() {
   aiBusy = true; renderCleanup(); renderFaces(); toast('Looking for faces…');
   try {
     const d = await (await postJSON(`/api/photos/${p.id}/faces`, {})).json();
-    S.faces = { found: true, list: d.faces.map((f) => ({ box: f.box, on: true })) };
+    S.faces = { found: true, list: d.faces.map((f) => ({ box: f.box, on: true })) }; snapFaces();
     toast(d.faces.length ? `Found ${d.faces.length} face${d.faces.length > 1 ? 's' : ''}.` : 'No faces found.', !d.faces.length);
     return d.faces.length > 0;
   } catch (ex) { fail(ex); return false; }
