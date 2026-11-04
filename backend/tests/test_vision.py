@@ -198,7 +198,7 @@ def test_new_tools_are_available_actions_and_background_colours_are_cleaned():
 def test_status_lists_models_and_phones_cannot_download(v):
     s = v.c.get("/api/vision").json()
     names = {m["name"]: m for m in s["models"]}
-    assert set(names) == {"sam2", "lama", "birefnet", "yunet", "face-landmarker", "sdxl-inpaint"}
+    assert set(names) == {"sam2", "sam2-tiny", "sam2-large", "lama", "birefnet", "birefnet-lite", "yunet", "face-landmarker", "sdxl-inpaint"}
     assert names["sdxl-inpaint"]["required"] is False and "RAIL" in names["sdxl-inpaint"]["license"]
     assert names["sam2"]["license"] == "Apache-2.0" and names["birefnet"]["license"] == "MIT"
     w = v.world; w.enable(); w.pair()
@@ -364,3 +364,54 @@ def test_real_lama_on_a_large_hole_changes_nothing_outside_it():
     assert np.abs(out - img.astype(int))[ring].max() == 0, "pixels outside the hole were altered"
     assert np.abs(out - bg.astype(int))[hole].mean() < 25                         # and the hole is filled with plausible backdrop
     eng.release()
+
+
+# ---------------------------------------------------------------- phase 8: model tiers (SAM tiny/base+/large, BiRefNet lite/full)
+def _sparse(root, names):
+    for n in names:
+        for f in registry.MODELS[n]["files"]:
+            p = root / f["path"]
+            p.parent.mkdir(parents=True, exist_ok=True)
+            with open(p, "wb") as fh:
+                fh.truncate(f["size"])
+
+
+def test_engine_uses_the_best_installed_variant(tmp_path):
+    from veil.vision.engine import Engine, ModelError
+    e = Engine(tmp_path)
+    with pytest.raises(ModelError, match="Segment Anything is not downloaded"):
+        e.pick("selection")
+    with pytest.raises(ModelError, match="BiRefNet is not downloaded"):
+        e.pick("matte")
+    _sparse(tmp_path, ["sam2-tiny", "birefnet-lite"])
+    assert (e.pick("selection"), e.pick("matte")) == ("sam2-tiny", "birefnet-lite")
+    _sparse(tmp_path, ["sam2"])
+    assert e.pick("selection") == "sam2"
+    _sparse(tmp_path, ["sam2-large", "birefnet"])
+    assert (e.pick("selection"), e.pick("matte")) == ("sam2-large", "birefnet")
+
+
+@pytest.mark.parametrize("have,ready", [
+    (["sam2-tiny", "birefnet-lite", "lama", "yunet", "face-landmarker"], True),             # the Minimum set
+    (["sam2", "birefnet", "lama", "yunet", "face-landmarker"], True),                       # Recommended
+    (["sam2-large", "birefnet", "lama", "yunet", "face-landmarker"], True),                 # High-end
+    (["sam2-tiny", "birefnet", "lama", "yunet", "face-landmarker"], True),                  # mixed is fine
+    (["sam2-tiny", "lama", "yunet", "face-landmarker"], False),                             # no person finder
+    (["birefnet-lite", "lama", "yunet", "face-landmarker"], False),                         # no outline model
+    (["sam2-tiny", "birefnet-lite", "yunet", "face-landmarker"], False),                    # no LaMa
+])
+def test_ready_means_one_of_each_choice_plus_the_single_models(tmp_path, have, ready):
+    from veil.vision.engine import Engine
+    _sparse(tmp_path, have)
+    e = Engine(tmp_path)
+    if not e.libraries_ok():
+        pytest.skip("torch/opencv are not installed")
+    assert e.status()["ready"] is ready
+
+
+def test_every_sam_variant_names_a_real_config_and_lite_uses_the_small_backbone():
+    for n in ("sam2", "sam2-tiny", "sam2-large"):
+        assert registry.MODELS[n]["sam_config"].startswith("configs/sam2.1/sam2.1_hiera_")
+    assert registry.MODELS["birefnet"]["backbone"] == 6 and registry.MODELS["birefnet-lite"]["backbone"] == 3
+    src = (Path(__file__).resolve().parents[1] / "veil/vision/vendor/birefnet.py").read_text()
+    assert "][self.bb_index]" in src and "bb_index = 6" in src                  # the full model is still the default

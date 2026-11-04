@@ -3,11 +3,74 @@
 A local, private, browser-based photo editor for professional boudoir and portrait
 photographers, and the models they work with. Photos stay on your machine. No telemetry.
 
-> Work in progress: phase 7 of 9. Screenshots, setup steps and hardware
+> Work in progress: phase 8 of 9. Screenshots, setup steps and hardware
 > requirements land with the later phases.
 
 Veil is for photographs of consenting adults. It never swaps in a face from an
 uploaded image.
+
+## Install
+
+Veil runs on Linux (64-bit Intel/AMD). The installer works on a computer that has never had Veil on it.
+
+```
+git clone <this repository> veil-studio
+cd veil-studio
+./install.sh --dry-run     # shows everything it would download or install, and changes nothing
+./install.sh               # asks a few questions, shows each download with its size and license, then installs
+```
+
+What it does:
+
+1. **Looks at your computer**: graphics card and video memory, memory, free disk space, Python, and any Ollama models you already have.
+2. **Asks a few plain questions** (what you will mainly do, how typed commands should be understood, whether you want phone access, where to keep files)
+   and **recommends Minimum, Recommended or High-end**. You can pick another.
+3. **Shows every download** with its size and license, the total, and the free space needed, and waits for your yes.
+4. **Checks every file** against a recorded SHA-256 and deletes any file that does not match. Interrupted downloads resume.
+5. Asks before every step that needs your administrator password (`sudo`). It shows the exact command; you type your password in your own
+   terminal. Run it with `--no-sudo` and it only prints those commands for you to run.
+6. Installs Veil's own Python environment (nothing system-wide), the models, optionally Ollama and a language model, optionally Tailscale,
+   a `veil` command and (if you want) a menu entry. Re-running it continues where it stopped and skips what is already right.
+7. **Checks the finished install**: libraries load, every model matches its checksum, the editing engine is ready.
+
+`./install.sh --uninstall` removes what it set up. It never touches your photos.
+
+| Set | For | Models | Language model |
+|---|---|---|---|
+| Minimum | 4-6 GB video memory, or no NVIDIA card (slower) | SAM 2.1 tiny, BiRefNet lite, LaMa, face models | `qwen3.5:2b` (2.7 GB) |
+| Recommended | 8-12 GB video memory | SAM 2.1 base+, BiRefNet, LaMa, face models | `qwen3.5:9b` (6.6 GB) |
+| High-end | 16 GB or more video memory (and 32 GB memory) | SAM 2.1 large, BiRefNet, LaMa, face models | `qwen3.5:27b` (17.5 GB) |
+
+The optional generative model (6.9 GB, needs an NVIDIA card) is offered on top of any set, with its license restrictions shown first.
+Rough disk space: the Python libraries take about 6 GB with an NVIDIA card (3.2 GB to download), or about 1.3 GB on processor-only
+computers. Ollama adds about 4 GB. The installer shows the exact figures for your choices and your free space.
+
+**Graphics cards.** NVIDIA cards are supported. Without one, Veil installs the processor-only build and only the Minimum set
+(slow, and no generative model). **AMD support is planned** (not in this version); AMD and Intel graphics are detected and
+the installer says so, then uses the processor.
+
+**Linux distributions.** Debian, Ubuntu and Mint (and derivatives that use `apt`) are fully supported: the installer can install missing
+system packages and Tailscale for you. On **Fedora** and **Arch** it prints the commands to run yourself, then continues:
+
+```
+# Fedora
+sudo dnf install -y python3 python3-pip curl zstd
+# Arch
+sudo pacman -S --needed python python-pip curl zstd
+# Tailscale (any distribution): https://tailscale.com/download/linux
+```
+
+**Ollama without administrator rights.** If Ollama is not installed and you want a language model on your computer, the installer downloads
+the official release (checked against the SHA-256 GitHub lists for the file), unpacks it into `~/.local` and, where your system has user
+services, starts it at login. Models you already have in Ollama are reused. Ollama tags can be re-published, so the installer compares a fresh
+download with the weights recorded in Veil and tells you if it is a newer build.
+
+**Phone access (Tailscale)** is optional. The installer adds Tailscale's apt repository and package (with your approval), then walks you through
+signing in on the computer and on the phone, step by step. It never types passwords or signs in for you.
+
+**What is not verified by checksum.** Python libraries come from PyPI over HTTPS and pip checks each file against the hash the index lists; the
+versions are not pinned to hashes in this version. Language models are checked by Ollama itself. Everything else is pinned in
+`backend/veil/vision/registry.py`.
 
 ## Models and licenses
 
@@ -30,13 +93,18 @@ OpenAI-compatible or Anthropic model; then that model's license and terms are yo
 
 | Model | Used for | Download | License |
 |---|---|---|---|
-| Segment Anything 2.1, `base+` (Meta) | click / box to outline | 324 MB | Apache-2.0 |
+| Segment Anything 2.1, `base+` (Meta) | click / box to outline (Recommended) | 324 MB | Apache-2.0 |
+| Segment Anything 2.1, `tiny` (Meta) | the same, smaller (Minimum) | 156 MB | Apache-2.0 |
+| Segment Anything 2.1, `large` (Meta) | the same, most precise (High-end) | 898 MB | Apache-2.0 |
 | LaMa `big-lama` | fills in removed objects and tattoos | 206 MB | Apache-2.0 |
-| BiRefNet | finds the person for background tools | 444 MB | MIT |
+| BiRefNet | finds the person for background tools (Recommended, High-end) | 444 MB | MIT |
+| BiRefNet lite | the same, smaller (Minimum) | 178 MB | MIT |
 
 - LaMa: the code repository (advimman/lama) is Apache-2.0. Veil downloads the weights from a
   third-party re-host (enesmsahin/simple-lama-inpainting, release v0.1.0); its SHA-256 is recorded in
   `backend/veil/vision/registry.py`.
+- SAM tiny and large: Meta publishes no checksums, so the SHA-256 recorded in `registry.py` is from the first download. (`small` is not offered.)
+- BiRefNet lite: its SHA-256 matches the one Hugging Face publishes. It runs the same vendored code with a smaller backbone (one index differs).
 - BiRefNet: the code is vendored in `backend/veil/vision/vendor/` (MIT, notice in `LICENSE-BiRefNet`),
   pinned to one revision, with a small change that removes its dependency on the `transformers` library.
 - Python libraries (PyTorch, OpenCV, numpy, timm, einops, kornia, safetensors, sam2 and its helpers)

@@ -3,6 +3,8 @@ See LICENSE-BiRefNet next to this file.
 
 Vendored from huggingface.co/ZhengPeng7/BiRefNet at revision e2bf8e4460fc8fa32bba5ea4d94b3233d367b0e4
 (birefnet.py + BiRefNet_config.py). Changes made by Veil, nothing else:
+  - Config.bb_index chooses the backbone, so the same code also runs BiRefNet_lite (revision aa62cd87eafb9cc43056d08ef3615a14628b831d
+    of huggingface.co/ZhengPeng7/BiRefNet_lite, whose code is identical except for that one index: 3 instead of 6).
   - the 'transformers' library is not needed: PretrainedConfig / PreTrainedModel are small stand-ins
     (a plain torch.nn.Module), the config class is defined here, and post_init() is removed.
 The weights are loaded from a local, checksum-verified file; nothing is fetched from the internet.
@@ -17,6 +19,7 @@ class PretrainedConfig:  # stand-in: Veil does not use the 'transformers' librar
 
 
 class Config(PretrainedConfig):
+    bb_index = 6          # Veil: which backbone below; 6 = swin_v1_l (BiRefNet), 3 = swin_v1_t (BiRefNet lite)
     def __init__(self) -> None:
         # Compatible with the latest version of transformers
         super().__init__()
@@ -77,7 +80,7 @@ class Config(PretrainedConfig):
             'swin_v1_b', 'swin_v1_l',               # 5-bs9, 6-bs4
             'pvt_v2_b0', 'pvt_v2_b1',               # 7, 8
             'pvt_v2_b2', 'pvt_v2_b5',               # 9-bs10, 10-bs5
-        ][6]
+        ][self.bb_index]
         self.lateral_channels_in_collection = {
             'vgg16': [512, 256, 128, 64], 'vgg16bn': [512, 256, 128, 64], 'resnet50': [1024, 512, 256, 64],
             'pvt_v2_b2': [512, 320, 128, 64], 'pvt_v2_b5': [512, 320, 128, 64],

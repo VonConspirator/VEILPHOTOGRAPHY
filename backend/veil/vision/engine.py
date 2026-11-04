@@ -16,7 +16,6 @@ from .registry import ModelError
 IDLE_SECONDS = 300
 LAMA_MAX_SIDE = 1536       # larger crops are shrunk for the model and the result is scaled back
 SDXL_SIDE = 1024
-SAM_CONFIG = "configs/sam2.1/sam2.1_hiera_b+.yaml"
 
 
 def _torch():
@@ -61,6 +60,7 @@ class Engine:
         self._sam = self._lama = self._birefnet = self._sdxl = None
         self._yunet = self._landmarker = None
         self._sam_key = None
+        self._sam_name = self._bn_name = None
         self._last_use = 0.0
         self._timer: threading.Timer | None = None
         self._verified: set[str] = set()
@@ -87,7 +87,10 @@ class Engine:
                            "tier": m["tier"], "size": sum(f["size"] for f in m["files"]),
                            "installed": registry.installed(self.root, name), "extra_packages": m.get("extra_packages", ""),
                            "libs_ok": {"sdxl-inpaint": None, "face-landmarker": None}.get(name, True)})
-        base = all(x["installed"] for x in models if x["required"])
+        # ready = every single-file model is there, and at least one variant of each choice (SAM size, BiRefNet size)
+        groups = {m["group"] for m in registry.MODELS.values() if m.get("group")}
+        base = all(x["installed"] for x in models if x["required"] and not registry.MODELS[x["name"]].get("group")) and \
+            all(any(x["installed"] for x in models if registry.MODELS[x["name"]].get("group") == g) for g in groups)
         try:
             import diffusers  # noqa: F401
             gen = True
@@ -108,6 +111,14 @@ class Engine:
 
     def has(self, name: str) -> bool:
         return registry.installed(self.root, name)
+
+    def pick(self, group: str) -> str:
+        """The best installed variant of a choice (largest SAM, full BiRefNet before lite)."""
+        have = [n for n, m in registry.MODELS.items() if m.get("group") == group and self.has(n)]
+        if not have:
+            label = {"selection": "Segment Anything", "matte": "BiRefNet"}.get(group, group)
+            raise ModelError(f"{label} is not downloaded yet. Open Model, then Editing models.")
+        return max(have, key=lambda n: registry.MODELS[n]["rank"])
 
     # ------------------------------------------------------------ memory
     def _touch(self) -> None:
@@ -131,6 +142,7 @@ class Engine:
             self._sam = self._lama = self._birefnet = self._sdxl = None
             self._yunet = self._landmarker = None
             self._sam_key = None
+            self._sam_name = self._bn_name = None
             gc.collect()
             try:
                 t = _torch()
@@ -153,14 +165,16 @@ class Engine:
         if not points and box is None:
             raise ModelError("Click on the thing you want to select, or draw a box around it.")
         with self._lock:
-            self._need("sam2")
+            name = self.pick("selection")
+            self._need(name)
             torch = _torch()
-            if self._sam is None:
+            if self._sam is None or self._sam_name != name:
                 from sam2.build_sam import build_sam2
                 from sam2.sam2_image_predictor import SAM2ImagePredictor
-                ckpt = str(self.root / registry.MODELS["sam2"]["files"][0]["path"])
-                self._sam = SAM2ImagePredictor(build_sam2(SAM_CONFIG, ckpt, device=self.device()))
-                self._sam_key = None
+                m = registry.MODELS[name]
+                ckpt = str(self.root / m["files"][0]["path"])
+                self._sam = SAM2ImagePredictor(build_sam2(m["sam_config"], ckpt, device=self.device()))
+                self._sam_name, self._sam_key = name, None
             if self._sam_key != key:
                 self._sam.set_image(np.asarray(img.convert("RGB")))
                 self._sam_key = key
@@ -216,26 +230,28 @@ class Engine:
             return out_img
 
     # ------------------------------------------------------------ foreground (BiRefNet)
-    def _birefnet_model(self):
-        if self._birefnet is None:
+    def _birefnet_model(self, name: str):
+        if self._birefnet is None or self._bn_name != name:
             torch = _torch()
             from safetensors.torch import load_file
-            from .vendor.birefnet import BiRefNet
-            net = BiRefNet(bb_pretrained=False)
-            net.load_state_dict(load_file(str(self.root / registry.MODELS["birefnet"]["files"][0]["path"])))
+            from .vendor import birefnet as vb
+            vb.Config.bb_index = registry.MODELS[name]["backbone"]          # 6 = Swin-L (full), 3 = Swin-T (lite)
+            net = vb.BiRefNet(bb_pretrained=False)
+            net.load_state_dict(load_file(str(self.root / registry.MODELS[name]["files"][0]["path"])))
             net = net.to(self.device()).eval()
             if self.device() == "cuda":
                 net = net.half()
-            self._birefnet = net
+            self._birefnet, self._bn_name = net, name
         return self._birefnet
 
     def matte(self, img: Image.Image) -> Image.Image:
         """The person (or main subject) as a soft 'L' matte, white = foreground, same size as img."""
         with self._lock:
-            self._need("birefnet")
+            name = self.pick("matte")
+            self._need(name)
             torch = _torch()
             rgb = img.convert("RGB")
-            net = self._birefnet_model()
+            net = self._birefnet_model(name)
             arr = np.asarray(rgb.resize((1024, 1024), Image.Resampling.BICUBIC)).astype(np.float32) / 255
             arr = (arr - np.array([0.485, 0.456, 0.406], dtype=np.float32)) / np.array([0.229, 0.224, 0.225], dtype=np.float32)
             x = torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0)
