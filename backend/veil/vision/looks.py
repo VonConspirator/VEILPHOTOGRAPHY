@@ -30,7 +30,7 @@ STYLE_RE = re.compile(r"^[A-Za-z][A-Za-z \-]{1,39}$")
 EYE_COLORS = {"blue": "#4a86c5", "green": "#4f9a5b", "brown": "#6b4423", "hazel": "#8e6b3a", "grey": "#8a9aa5", "gray": "#8a9aa5",
               "amber": "#b8801f", "violet": "#8a63c4", "black": "#1a1a1a"}
 HAIR_COLORS = {"black": "#1c1a19", "brown": "#4a3020", "dark brown": "#33201a", "light brown": "#7a5a3a", "chestnut": "#5e3a26",
-               "blonde": "#d8b878", "blond": "#d8b878", "platinum": "#e8dcc0", "red": "#a8401f", "auburn": "#7a2f1c",
+               "blonde": "#d9b27a", "blond": "#d9b27a", "platinum": "#e8dcc0", "red": "#a8401f", "auburn": "#7a2f1c",
                "ginger": "#b5541f", "grey": "#9a9a9a", "gray": "#9a9a9a", "silver": "#c0c0c0", "white": "#ece8e0",
                "pink": "#e58fb0", "blue": "#2e5eaa", "green": "#2e8b57", "purple": "#7d4fa3", "teal": "#2a8a8a"}
 LIP_COLORS = {"red": "#b3202a", "pink": "#e0709a", "nude": "#c48a7a", "coral": "#e5675a", "plum": "#7a2f4f", "berry": "#8a2a4f",
@@ -376,17 +376,40 @@ def _drop_skin(img: Image.Image, face: F.Face, m: np.ndarray, hb) -> np.ndarray:
     inv = np.linalg.inv(np.cov(samp.T) + np.eye(3) * 2.0)
     d = lab - mu
     d2 = np.einsum("...i,ij,...j->...", d, inv, d)
-    skinlike = (d2 < 1.8 ** 2) & (lab[..., 0] > 0.8 * mu[0])
+    colour = (d2 < 1.8 ** 2) & (lab[..., 0] > 0.8 * mu[0])       # looks exactly like this face's skin
+    # Light strands can match the skin colour, and skin only ever sits close to the face. So: right at the face
+    # (forehead, ears) the colour rule is strict; a little further out (ears, jaw, neck) it only applies below the
+    # eyes; further still it only applies to smooth pixels, because skin is smooth and hair is full of fine lines.
+    tex = _texture(lab[..., 0])
+    skin_tex = float(np.median(tex[sk]))
+    smooth = tex < max(2.2 * skin_tex, skin_tex + 1.5)
+    fa = F.face_area(face, shape)
+    fs = face.size()
+
+    def zone(g):
+        return F._grown(fa, g * fs)[hb[1]:hb[3], hb[0]:hb[2]] > 0
+    eye_y = float(face.pts[[33, 263]][:, 1].mean())
+    below = np.arange(hb[1], hb[3])[:, None] >= eye_y - 0.10 * face.height()
+    colour &= zone(0.18) | (zone(0.30) & smooth)
+    loose_ok = zone(0.06) | (zone(0.18) & below) | (zone(0.30) & below & smooth)
     # next to the face (ear, hairline, neck) anything much lighter than the typical hair is skin too
     ring = F._grown(F.face_area(face, shape), 0.28 * face.size())[hb[1]:hb[3], hb[0]:hb[2]] > 0
     far = (m[hb[1]:hb[3], hb[0]:hb[2]] > 0) & ~ring
     ref = float(np.median(lab[..., 0][far])) if far.sum() > 500 else None
+    skinlike = colour
     if ref is not None:
-        skinlike |= ring & (lab[..., 0] > ref + 22) & (lab[..., 0] > 0.7 * mu[0])
+        skinlike = skinlike | (ring & (lab[..., 0] > ref + 22) & (lab[..., 0] > 0.7 * mu[0]) & loose_ok)
     out = m.copy()
     sub = out[hb[1]:hb[3], hb[0]:hb[2]]
     sub[skinlike] = 0
     return out
+
+
+def _texture(L: np.ndarray) -> np.ndarray:
+    """How much fine detail there is around each pixel (high on hair strands, low on smooth skin)."""
+    L = L.astype(np.float32)
+    g = np.hypot(cv2.Sobel(L, cv2.CV_32F, 1, 0, ksize=3), cv2.Sobel(L, cv2.CV_32F, 0, 1, ksize=3))
+    return cv2.blur(g, (7, 7))
 
 
 def _component_with(m: np.ndarray, seeds: list[tuple[int, int]], min_area: float) -> np.ndarray:
@@ -413,7 +436,9 @@ def _recolor_hair(arr, hair, target_rgb):
     lo, hi = (float(np.percentile(L[sel], 2)), float(np.percentile(L[sel], 98))) if sel.any() else (0.0, 100.0)
     span = max(hi - lo, 8.0)
     # keep every strand's light and shade (its detail) but move the average toward the new colour
-    new_l = np.clip((L - mean_l) * 0.9 + (mean_l + (tgt[0] - mean_l) * 0.85), 0, 100)
+    # going lighter loses depth (shadows between strands flatten), so give the strands a bit more contrast then
+    gain = 0.9 + min(0.45, max(0.0, (tgt[0] - mean_l) / 100))
+    new_l = np.clip((L - mean_l) * gain + (mean_l + (tgt[0] - mean_l) * 0.85), 0, 100)
     wchroma = np.clip(0.55 + 0.45 * (L - lo) / span, 0.35, 1.2)
     out = lab.copy()
     out[..., 0] = new_l

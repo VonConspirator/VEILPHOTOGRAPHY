@@ -435,6 +435,21 @@ def test_real_makeup_goes_on_and_comes_off(eng, portraits):
 
 
 @faces_real
+def test_real_light_colour_reaches_the_bright_strands(eng, portraits):
+    """A light colour used to leave bright, sunlit strands on one side brown (they looked like skin to the filter).
+    On the 'plain' portrait those strands are beside the forehead, left of the face. Every pixel there is hair."""
+    img = portraits["plain"]; box, face = face_of(eng, img)
+    x0, y0, x1, y1 = face.box; fw, fh = x1 - x0, y1 - y0
+    zone = (slice(int(y0 + 0.02 * fh), int(y0 + 0.45 * fh)), slice(int(x0 - 0.24 * fw), int(x0 - 0.02 * fw)))
+    person = np.asarray(eng.matte(img).convert("L")) > 200
+    assert person[zone].mean() > 0.8                                     # the zone really is the person (hair), not backdrop
+    out = run(eng, img, "hair_color", {**params_for(img, box), "color": "blonde"})
+    d = np.abs(np.asarray(out).astype(int) - np.asarray(img.convert("RGB")).astype(int)).sum(2)
+    assert (d[zone] > 30).mean() > 0.85, "bright strands beside the forehead were skipped"
+    assert lab(out)[..., 0][zone].mean() > lab(img)[..., 0][zone].mean() + 0.05     # and they got lighter
+
+
+@faces_real
 def test_real_facial_hair_edits_only_the_lower_face(eng, portraits):
     img = portraits["plain"]; box, face = face_of(eng, img)
     sh = (img.height, img.width)
