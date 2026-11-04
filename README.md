@@ -9,6 +9,18 @@ photographers, and the models they work with. Photos stay on your machine. No te
 Veil is for photographs of consenting adults. It never swaps in a face from an
 uploaded image.
 
+## Screenshots
+
+All pictures here use a synthetic (AI-generated) portrait made for testing; no real person appears anywhere in this repository.
+
+![The editor with a portrait open: tools on the left, adjustments, cleanup and faces on the right](docs/screenshots/editor.jpg)
+
+![Faces found in the photo, ticked so an edit applies only to them](docs/screenshots/faces.jpg)
+
+![Export with an optional watermark, previewed before saving](docs/screenshots/export-watermark.jpg)
+
+![The first-launch tutorial](docs/screenshots/tutorial.jpg)
+
 ## Install
 
 Veil runs on Linux (64-bit Intel/AMD). The installer works on a computer that has never had Veil on it.
@@ -68,9 +80,22 @@ download with the weights recorded in Veil and tells you if it is a newer build.
 **Phone access (Tailscale)** is optional. The installer adds Tailscale's apt repository and package (with your approval), then walks you through
 signing in on the computer and on the phone, step by step. It never types passwords or signs in for you.
 
-**What is not verified by checksum.** Python libraries come from PyPI over HTTPS and pip checks each file against the hash the index lists; the
-versions are not pinned to hashes in this version. Language models are checked by Ollama itself. Everything else is pinned in
-`backend/veil/vision/registry.py`.
+**Python libraries are hash-checked too.** The libraries are installed from lists in `lock/` that pin every package to an exact version and to the
+SHA-256 of every file that may be installed (64-bit Linux, CPython 3.12): `gpu.lock` (NVIDIA), `gpu-sdxl.lock` (with generative fill) and `cpu.lock`
+(processor-only). The installer runs `pip install --require-hashes --no-deps --only-binary=:all:` on them, so pip refuses any file whose SHA-256 is not listed
+(a swapped, tampered or newer-than-tested file is refused, not installed). Three small packages that exist only as source (`sam2`, `iopath`,
+`antlr4-python3-runtime`) are built from hash-checked source in a second step, with the build tools from the first list and no network for build
+dependencies. When the install finishes it compares every installed library with the list. The lists are the exact versions the test suite passed with, and
+`lock/make_lock.py` regenerates them (see `lock/README.md`).
+Hash-checking proves a file is the one that was listed, not that its publisher is trustworthy: you are still trusting PyTorch, NVIDIA and the other
+projects listed in the licenses section.
+
+**Other Python versions.** The lists cover Python 3.12, the default on Ubuntu 24.04 and Linux Mint 22. On another Python (for example 3.10 on Ubuntu 22.04)
+the installer stops and says so. `./install.sh --unlocked` installs the newest compatible libraries without hash-checking; it prints a warning, and
+nothing in that case is verified beyond what pip's index offers.
+
+**What else is checked.** Language models are checked by Ollama itself. Every model file is pinned in `backend/veil/vision/registry.py` by size and SHA-256.
+The SAM 2.1 tiny and large checksums were recorded when first downloaded, because Meta publishes none.
 
 ## First launch tutorial
 
