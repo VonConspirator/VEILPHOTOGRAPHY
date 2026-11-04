@@ -19,6 +19,7 @@ from . import net, plan
 
 RECORD = Path("~/.config/veil/install.json").expanduser()
 LAUNCHER = Path("~/.local/bin/veil").expanduser()
+WORKER_LAUNCHER = Path("~/.local/bin/veil-worker").expanduser()
 DESKTOP = Path("~/.local/share/applications/veil.desktop").expanduser()
 UNIT = Path("~/.config/systemd/user/ollama.service").expanduser()
 LOG = Path("~/.local/state/veil/install.log").expanduser()
@@ -338,6 +339,22 @@ def write_launcher(r: Runner, venv: Path, models: Path, data: Path, ollama: Path
     LAUNCHER.parent.mkdir(parents=True, exist_ok=True)
     LAUNCHER.write_text(launcher_text(venv, models, data, ollama, needs_start))
     LAUNCHER.chmod(0o755)
+
+
+def worker_launcher_text(venv: Path, models: Path, data: Path) -> str:
+    q = shlex.quote
+    return ("#!/bin/sh\n# Starts the Veil GPU worker. Written by Veil's installer; safe to delete (uninstall.sh removes it).\n"
+            f"export VEIL_MODELS_DIR={q(str(models))}\nexport VEIL_DATA_DIR={q(str(data))}\n"
+            f"exec {q(str(venv / 'bin' / 'python'))} -I -m veil.worker \"$@\"\n")
+
+
+def write_worker_launcher(r: Runner, venv: Path, models: Path, data: Path) -> None:
+    r.say(f"  Writing the 'veil-worker' command: {WORKER_LAUNCHER}")
+    if r.dry_run:
+        return
+    WORKER_LAUNCHER.parent.mkdir(parents=True, exist_ok=True)
+    WORKER_LAUNCHER.write_text(worker_launcher_text(venv, models, data))
+    WORKER_LAUNCHER.chmod(0o755)
 
 
 def write_desktop(r: Runner) -> None:

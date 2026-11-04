@@ -64,6 +64,8 @@
       <button id="btn-library" title="Your photos">Photos</button>
       <button id="btn-phone" title="Use Veil from your phone">Phone <span id="phone-badge" class="badge" hidden>0</span></button>
       <button id="btn-wm" title="Make and manage watermarks">Watermarks</button>
+      <button id="btn-worker" title="Use another computer's graphics card for the heavy jobs">GPU worker</button>
+      <span id="job-where" class="hint" hidden></span>
       <span class="sp"></span>
       <button id="btn-undo" title="Undo (Ctrl+Z)" disabled>Undo</button>
       <button id="btn-redo" title="Redo (Ctrl+Shift+Z)" disabled>Redo</button>
@@ -250,6 +252,31 @@
         <ul id="device-list" class="devices"></ul>
         <p id="phone-error" class="error" role="alert"></p>
         <div class="row"><button id="btn-phone-close">Close</button></div>
+      </div>
+    </div>
+
+    <div id="worker-dialog" class="modal" hidden>
+      <div class="card wide" role="dialog" aria-labelledby="worker-title">
+        <h2 id="worker-title">GPU worker</h2>
+        <p class="hint">A worker is another computer of yours with a strong graphics card (at home, or a rented one). Veil sends it only the heavy jobs: selecting, finding the person, filling in, faces and generative fill. It reaches it over Tailscale only, the worker keeps nothing, and if it cannot be reached Veil does the job here and tells you.</p>
+        <p id="worker-state"></p>
+        <div id="worker-pair" hidden>
+          <ol class="steps">
+            <li>On the worker, run <code>veil-worker pair</code>. It prints a code that works once, for 10 minutes.</li>
+            <li>Type the worker's Tailscale address below (shown when the worker starts), and the code.</li>
+          </ol>
+          <form id="worker-form" class="aiform" autocomplete="off">
+            <label>Worker address <input id="worker-address" type="text" placeholder="100.101.102.103 or my-gpu.tail1234.ts.net" maxlength="200" spellcheck="false"></label>
+            <label>Pairing code <input id="worker-code" type="text" placeholder="ABCDE-FGHJK" maxlength="40" spellcheck="false" autocomplete="off"></label>
+            <div class="row"><button class="primary" type="submit">Pair</button></div>
+          </form>
+        </div>
+        <div id="worker-manage" hidden>
+          <label class="check"><input type="checkbox" id="worker-enabled"> Use the worker for heavy jobs</label>
+          <div class="row"><button id="btn-worker-test">Test connection</button><button id="btn-worker-forget">Forget this worker</button></div>
+        </div>
+        <p id="worker-error" class="error" role="alert"></p>
+        <div class="row"><button id="btn-worker-close">Close</button></div>
       </div>
     </div>
 

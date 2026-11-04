@@ -32,6 +32,21 @@ TAILSCALE_PHONE = """
 """
 TAILSCALE_STEPS = TAILSCALE_COMPUTER + TAILSCALE_PHONE
 
+WORKER_TAILSCALE = """
+  Connecting this worker to your Tailscale network (a worker only ever listens on Tailscale, never on the internet or your network):
+
+    1. On this machine run:  sudo tailscale up      (as root, just:  tailscale up)
+       It prints an address that starts with https://login.tailscale.com/ . Open it in any browser, on any device.
+    2. Sign in with the SAME account you use on your own computer, then click "Connect".
+       Rented machine you only reach through a terminal? You can use an auth key instead: in your browser open
+       https://login.tailscale.com/admin/settings/keys , click "Generate auth key", tick "Ephemeral", leave "Reusable" off,
+       click "Generate", copy the key, and run here:  tailscale up --auth-key=PASTE_THE_KEY_HERE   (treat the key as a password).
+    3. Check it:  tailscale ip -4      prints this machine's Tailscale address (it starts with 100.).
+    4. Container without /dev/net/tun (common on rented GPU services)? Start Tailscale in userspace mode instead:
+         tailscaled --tun=userspace-networking --socks5-server=localhost:1055 &
+       then step 1 or 2, then run once:  tailscale serve --bg --tcp 5196 tcp://localhost:5196
+"""
+
 LICENSE_SDXL = ("The generative model (Stable Diffusion XL Inpainting) is under the CreativeML Open RAIL++-M license. It is not Apache or MIT: "
                 "it has use restrictions that apply to you. In short, you agree not to use it to break the law, to exploit or harm minors, to make or "
                 "spread harmful false information, to harass or defame, to discriminate, for medical advice, or for law-enforcement profiling. "
@@ -95,6 +110,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--desktop-entry", dest="desktop", action="store_true", default=None, help="add Veil to the application menu")
     p.add_argument("--no-desktop-entry", dest="desktop", action="store_false")
     p.add_argument("--force", action="store_true", help="continue even if the disk looks too small")
+    p.add_argument("--worker", action="store_true", help="set this computer up as a GPU worker for your other computer (no Ollama, Tailscale required)")
     p.add_argument("--uninstall", action="store_true", help="remove what the installer set up (never your photos)")
     return p
 
@@ -125,6 +141,7 @@ def show_plan(p, reg) -> None:
 def questions(args, h, reg, repo: Path) -> plan.Choices:
     c = plan.Choices(models_dir=args.models_dir or str(repo / "models"), data_dir=args.data_dir or str(repo / "data"))
     c.cpu = bool(args.cpu) or not h.gpus
+    c.worker = bool(args.worker)
     interactive = sys.stdin.isatty() and not args.yes
     say("\nA few questions")
     # 1. what for
@@ -136,8 +153,10 @@ def questions(args, h, reg, repo: Path) -> plan.Choices:
             ("Everything above, plus generated faces, hairstyle changes, makeup removal and facial hair", "Adds a 6.9 GB generative model with use restrictions."),
         ])
         c.sdxl = i == 1
-    # 2. typed commands
-    if args.llm:
+    # 2. typed commands (a worker never runs the language model)
+    if c.worker:
+        c.llm = "none"
+    elif args.llm:
         c.llm = args.llm
     elif interactive:
         i = ask_choice("\n2. Veil lets you type what you want ('make the skin smoother'). Which model should read your words?", [
@@ -146,14 +165,16 @@ def questions(args, h, reg, repo: Path) -> plan.Choices:
             ("None, I will use the buttons", ""),
         ])
         c.llm = ["ollama", "online", "none"][i]
-    # 3. phone
-    if args.tailscale is not None:
+    # 3. phone (a worker always needs Tailscale)
+    if c.worker:
+        c.tailscale = True
+    elif args.tailscale is not None:
         c.tailscale = args.tailscale
     elif interactive:
         c.tailscale = ask_yes_no("\n3. Do you want to use Veil from your phone? (sets up Tailscale, a free private network)", False)
     # 4. where
     if interactive and not (args.models_dir and args.data_dir):
-        say("\n4. Where should things be kept? Models are large; photos and settings are yours.")
+        say("\n4. Where should things be kept? Models are large; settings are yours." if c.worker else "\n4. Where should things be kept? Models are large; photos and settings are yours.")
         c.models_dir = args.models_dir or ask_text("   Models folder", c.models_dir)
         c.data_dir = args.data_dir or ask_text("   Photos and settings folder", c.data_dir)
     # tier
@@ -180,7 +201,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     repo = plan.ROOT
     reg = plan.load_registry()
-    say("Veil installer" + ("  (dry run: nothing will be changed)" if args.dry_run else ""))
+    say("Veil installer" + ("  (GPU worker mode)" if args.worker else "") + ("  (dry run: nothing will be changed)" if args.dry_run else ""))
     if args.uninstall:
         return uninstall(args)
     if sys.platform != "linux":
@@ -194,7 +215,9 @@ def main(argv: list[str] | None = None) -> int:
     if h.python < (3, 10):
         say(f"Python {'.'.join(map(str, h.python[:2]))} is too old; Veil needs 3.10 or newer.")
         return 2
-    if h.is_root and not args.yes:
+    if h.is_root and args.worker:
+        say("You are running as root, which is normal on a rented GPU machine, so administrator steps run directly without sudo.")
+    elif h.is_root and not args.yes:
         say("You are running as the administrator (root). Veil is meant to be installed as your normal user. Please run it without sudo.")
         return 2
     show_hardware(h)
@@ -262,7 +285,9 @@ def run_steps(args, h, reg, c, p, r, repo: Path, venv: Path) -> int:
     ollama_exe, needs_start = None, False
     started: list = []
     say("\n4/6  Language model")
-    if c.llm == "ollama":
+    if c.worker:
+        say("  Not needed: a worker only runs the heavy picture jobs. Typed commands are read on your own computer.")
+    elif c.llm == "ollama":
         ollama_exe = Path(h.ollama_path) if h.ollama_path else system.install_ollama(r, h)
         user_level = str(ollama_exe).startswith(str(Path.home()))
         has_service = False
@@ -281,7 +306,7 @@ def run_steps(args, h, reg, c, p, r, repo: Path, venv: Path) -> int:
         say("  Nothing to install. In Veil, open Model and add your online service and key.")
     else:
         say("  Skipped. Veil works with its buttons.")
-    say("\n5/6  Phone access (Tailscale)")
+    say("\n5/6  " + ("Tailscale (the only way a worker is reached)" if c.worker else "Phone access (Tailscale)"))
     if c.tailscale:
         if h.tailscale_path:
             say("  Tailscale is already installed.")
@@ -289,7 +314,10 @@ def run_steps(args, h, reg, c, p, r, repo: Path, venv: Path) -> int:
             system.tailscale_install(r, h)
         else:
             say("  This is not Debian/Ubuntu/Mint, so install Tailscale yourself: https://tailscale.com/download/linux")
-        say(TAILSCALE_PHONE if h.tailscale_state == 'running' else TAILSCALE_STEPS)
+        if c.worker:
+            say("" if h.tailscale_state == "running" else WORKER_TAILSCALE)
+        else:
+            say(TAILSCALE_PHONE if h.tailscale_state == 'running' else TAILSCALE_STEPS)
         if not r.dry_run and not args.yes and shutil.which("tailscale") and ask_yes_no("Run 'sudo tailscale up' now? (it prints a web address to open)", True):
             r.run(["tailscale", "up"], sudo=True, why="Connecting this computer to your Tailscale account.", check=False)
         if not r.dry_run and shutil.which("tailscale"):
@@ -299,14 +327,18 @@ def run_steps(args, h, reg, c, p, r, repo: Path, venv: Path) -> int:
     else:
         say("  Skipped. You can run the installer again later and choose phone access.")
     say("\n6/6  Finishing")
-    system.write_launcher(r, venv, models, data, ollama_exe if needs_start else None, needs_start)
-    want_desktop = args.desktop if args.desktop is not None else (ask_yes_no("Add Veil to your application menu?", True) if (sys.stdin.isatty() and not args.yes) else False)
+    if c.worker:
+        system.write_worker_launcher(r, venv, models, data)
+    else:
+        system.write_launcher(r, venv, models, data, ollama_exe if needs_start else None, needs_start)
+    want_desktop = False if c.worker else args.desktop if args.desktop is not None else (ask_yes_no("Add Veil to your application menu?", True) if (sys.stdin.isatty() and not args.yes) else False)
     if want_desktop:
         system.write_desktop(r)
-    system.write_record(r, {"repo": str(repo), "venv": str(venv), "models_dir": str(models), "data_dir": str(data), "tier": c.tier, "llm": c.llm,
+    rec_worker = {"worker_launcher": str(system.WORKER_LAUNCHER)} if c.worker else {}
+    system.write_record(r, {**rec_worker, "repo": str(repo), "venv": str(venv), "models_dir": str(models), "data_dir": str(data), "tier": c.tier, "llm": c.llm,
                             "ollama_installed_by_installer": bool(ollama_exe and not h.ollama_path), "ollama_exe": str(ollama_exe or ""),
                             "ollama_unit": str(system.UNIT) if (ollama_exe and not h.ollama_path and h.systemd_user) else "",
-                            "launcher": str(system.LAUNCHER), "desktop_entry": str(system.DESKTOP) if want_desktop else "",
+                            **({} if c.worker else {"launcher": str(system.LAUNCHER)}), "desktop_entry": str(system.DESKTOP) if want_desktop else "",
                             "model_names": names, "tailscale_installed_by_installer": bool(c.tailscale and not h.tailscale_path)})
     if r.dry_run:
         say("\nDry run finished. Nothing was changed or downloaded.")
@@ -321,6 +353,15 @@ def run_steps(args, h, reg, c, p, r, repo: Path, venv: Path) -> int:
     say("  Libraries load, every model matches its checksum, and the editing engine is ready.")
     for n in notes:
         say(f"  Note: {n}")
+    if c.worker:
+        say("\nThe Veil GPU worker is installed.")
+        say("  Start it:        veil-worker       (leave it running; it prints the address your own computer should use)")
+        if not shutil.which("veil-worker"):
+            say(f"                   (if 'veil-worker' is not found, open a new terminal, or run {system.WORKER_LAUNCHER})")
+        say("  Pair it:         in a second terminal on this machine run  veil-worker pair  and type the code into Veil on your own computer (GPU worker button).")
+        say("  Stop paying:     if this machine is rented, remember to stop or delete it at the provider when you are done.")
+        say("  Remove it:  ./install.sh --uninstall   (never touches your photos)")
+        return 0
     say("\nVeil is installed.")
     say("  Start it:   veil        (or choose Veil in your application menu)")
     if not shutil.which("veil"):
@@ -336,7 +377,8 @@ def uninstall(args) -> int:
         say("There is no record of an install here, so there is nothing to remove.")
         return 0
     say("This will remove:")
-    items = [("Veil's Python environment", rec.get("venv")), ("the 'veil' command", rec.get("launcher")), ("the menu entry", rec.get("desktop_entry"))]
+    items = [("Veil's Python environment", rec.get("venv")), ("the 'veil' command", rec.get("launcher")), ("the 'veil-worker' command", rec.get("worker_launcher")),
+             ("the menu entry", rec.get("desktop_entry"))]
     for n, pth in items:
         if pth:
             say(f"  - {n}: {pth}")

@@ -18,13 +18,14 @@ from .ai.settings import AISettings
 from .auth import AuthStore
 from .history import PhotoError, PhotoStore
 from .phone import DEVICE_SECONDS, PairingError, PhoneStore
+from .remote import Dispatcher, WorkerClient, WorkerConfig
 from .tailscale import Tailscale
 from .tools import ops
 from .vision import ops as vision_ops
 from .vision import routes as vision_routes
 from .vision.engine import Engine
 from .watermark import WatermarkStore
-from . import watermark_routes
+from . import watermark_routes, worker_routes
 
 WEB_DIR = Path(__file__).parent / "web"
 CSP = ("default-src 'self'; img-src 'self' blob: data:; style-src 'self'; script-src 'self'; "
@@ -66,7 +67,8 @@ class ExportRequest(BaseModel):
     watermark: str | None = None   # a saved watermark preset to draw on the exported copy (never on the saved versions)
 
 
-def create_app(data_dir: Path | None = None, tailscale: Tailscale | None = None, vision: Engine | None = None) -> FastAPI:
+def create_app(data_dir: Path | None = None, tailscale: Tailscale | None = None, vision: Engine | None = None,
+               worker_transport=None) -> FastAPI:
     data_dir = Path(data_dir) if data_dir else config.default_data_dir()
     data_dir.mkdir(parents=True, exist_ok=True)
     auth = AuthStore(data_dir)
@@ -74,7 +76,9 @@ def create_app(data_dir: Path | None = None, tailscale: Tailscale | None = None,
     phones = PhoneStore(data_dir)
     watermarks = WatermarkStore(data_dir)
     tailscale = tailscale or Tailscale()
-    engine = vision or Engine(config.default_models_dir())
+    local_engine = vision or Engine(config.default_models_dir())
+    worker_client = WorkerClient(WorkerConfig(data_dir), transport=worker_transport)
+    engine = Dispatcher(local_engine, worker_client)     # looks like the Engine; uses the GPU worker when one is switched on
     hosts = config.allowed_hosts()
     app = FastAPI(title="Veil", docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -332,15 +336,18 @@ def create_app(data_dir: Path | None = None, tailscale: Tailscale | None = None,
         return {"ok": True}
 
     watermark_routes.register(app, store=watermarks, photos=photos, small_jpeg=_small_jpeg, require_ready=require_ready, require_owner=require_owner)
+    worker_routes.register(app, dispatcher=engine, require_ready=require_ready, require_owner=require_owner)
     vision_routes.register(app, engine=engine, photos=photos, require_ready=require_ready, require_owner=require_owner)
     ai_settings = AISettings(data_dir)
     ai_routes.register(app, settings=ai_settings, photos=photos, small_jpeg=_small_jpeg,
                        require_ready=require_ready, require_owner=require_owner)
 
     app.state.photos = photos
+    app.state.data_dir = data_dir
     app.state.auth = auth
     app.state.ai_settings = ai_settings
-    app.state.vision = engine
+    app.state.vision = local_engine
+    app.state.dispatcher = engine
     app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="web")  # the editor page (after the API routes)
     return app
 

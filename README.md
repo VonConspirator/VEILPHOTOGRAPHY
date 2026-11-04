@@ -3,7 +3,7 @@
 A local, private, browser-based photo editor for professional boudoir and portrait
 photographers, and the models they work with. Photos stay on your machine. No telemetry.
 
-> Work in progress: phase 8 of 9. Screenshots, setup steps and hardware
+> Work in progress: phase 9 of 9. Screenshots, setup steps and hardware
 > requirements land with the later phases.
 
 Veil is for photographs of consenting adults. It never swaps in a face from an
@@ -71,6 +71,88 @@ signing in on the computer and on the phone, step by step. It never types passwo
 **What is not verified by checksum.** Python libraries come from PyPI over HTTPS and pip checks each file against the hash the index lists; the
 versions are not pinned to hashes in this version. Language models are checked by Ollama itself. Everything else is pinned in
 `backend/veil/vision/registry.py`.
+
+## GPU worker (optional)
+
+A GPU worker is a second computer with a strong NVIDIA card, at home or rented by the hour, that does Veil's heavy picture jobs
+(selecting, finding the person, filling in, finding faces, generative fill) for the computer you edit on. It is useful when your own computer has
+no NVIDIA card or a small one. Typed commands are **not** run on the worker in this version; they are read on your own computer.
+
+How it behaves:
+
+- **Tailscale only.** The worker listens on its Tailscale address and on itself, never on your Wi-Fi or the internet. Veil only talks to a
+  Tailscale address (or a name that resolves to one), checked on every request, and ignores proxy settings.
+- **One-time pairing.** On the worker you run `veil-worker pair`; it prints a code that works once, for 10 minutes. You type the code into Veil.
+  After five wrong guesses every pending code is cancelled. The worker then trusts that one computer through a long random token; the worker
+  keeps only a hash of it. Remove a computer with `veil-worker clients` and `veil-worker revoke ID`.
+- **The worker keeps nothing.** A photo is held in memory for the job (at most 15 minutes, six pictures), never written to disk, and the
+  worker has no accounts, no history and no telemetry. Jobs take only the photo being edited and its selection: there is no job that takes a
+  second picture, so no face can be copied from one picture into another.
+- **Automatic fallback.** If the worker is off, busy, unreachable or no longer trusts this computer, Veil does the job on your computer and shows
+  a notice saying so (and "Ran on ..." after each job that used the worker). If your computer cannot do the job either, the message
+  gives both reasons.
+- **You decide per computer.** The "GPU worker" button (owner at the computer only) pairs, switches the worker on or off, tests it and forgets it.
+  A paired phone can see where a job ran but cannot change the worker.
+
+What you are trusting: a worker you pair sees your photos while it works on them. Pair only machines you control. On a rented machine,
+the provider can in principle see its memory; do not use a rented worker for photos you would not hand to that provider.
+
+### Set up a worker on your own second computer
+
+1. On that computer, install Veil the normal way, but run `./install.sh --worker`. It sets up the libraries and the models for that
+   card, asks no question about language models or phones, and installs Tailscale if needed.
+2. Connect it to Tailscale (the installer prints these steps): `sudo tailscale up`, open the address it prints, sign in with the **same** account as your
+   own computer, click **Connect**.
+3. Start the worker: `veil-worker`. It prints the address to use, for example `100.101.102.103:5196`.
+4. In a second terminal on the worker: `veil-worker pair`. It prints a code like `ABCDE-FGHJK`.
+5. On your own computer, in Veil, click **GPU worker**, type the address and the code, click **Pair**. It should say
+   "Connected to ..." with the card's name. Leave **Use the worker for heavy jobs** ticked.
+
+### Set up a worker on a rented cloud GPU machine
+
+Any provider works if it gives you a Linux machine (Ubuntu 22.04 or 24.04 recommended) with an NVIDIA card (8 GB or more; 12 GB or more if you
+want generative fill), about 40 GB of disk, a terminal (SSH or a web terminal) and outbound internet. Menus differ between providers, so the
+provider steps are described by what to look for. **You pay for the machine while it exists. Stop or delete it when you are done.**
+
+1. **Make an auth key** (so the rented machine can join your Tailscale network without a browser).
+   In your own browser go to <https://login.tailscale.com/admin/settings/keys> and sign in with the same account you use on your own computer.
+   Click **Generate auth key...**. Type a description such as `veil-worker`. Switch **Ephemeral** on (the machine disappears from your network
+   when it goes offline). Leave **Reusable** off. Set the expiry to 1 day. Click **Generate key**, copy the key (it starts with `tskey-`) and keep it
+   private: treat it like a password. You will not see it again.
+2. **Rent the machine.** At your provider choose a GPU, the Ubuntu image, and at least 40 GB of disk. Start it, then open its terminal.
+3. **Get Veil onto it.** In that terminal: `git clone <the Veil repository address> veil-studio` and `cd veil-studio`.
+   (If the machine has no `git`: `apt-get update && apt-get install -y git`, or copy the folder with `scp`.)
+4. **Install the worker:** `./install.sh --worker`. On rented machines you are usually `root`; the installer says so and runs its administrator
+   steps directly. Press Enter to accept the recommended set (it reads the card's memory), or pick another. Wait for it to finish; the models
+   are downloaded each time on a fresh machine (about 1 GB for Recommended, plus 6.9 GB if you add generative fill).
+5. **Join Tailscale** with the key from step 1 (replace the part after `=`):
+   `tailscale up --auth-key=tskey-PASTE-YOUR-KEY-HERE`
+   - If you get "tailscaled is not running" or no `/dev/net/tun` (common inside containers), start Tailscale in userspace mode first:
+     `tailscaled --tun=userspace-networking --socks5-server=localhost:1055 &`, run the `tailscale up` command above, and then once:
+     `tailscale serve --bg --tcp 5196 tcp://localhost:5196`. The worker prints this help itself when it sees this situation.
+   - Check: `tailscale ip -4` prints an address starting with `100.`.
+6. **Start the worker:** `veil-worker` (if the machine says command not found, run `~/.local/bin/veil-worker`). Leave this terminal open (or run it inside `tmux` or `screen`). It prints the address to use.
+7. **Pair:** open a second terminal on the machine and run `veil-worker pair`. Copy the code.
+8. **On your own computer** (Tailscale switched on), open Veil, click **GPU worker**, type the worker's Tailscale address (from step 6, or
+   `tailscale ip -4`), type the code, click **Pair**. The dialog should say "Connected to ..." with the rented card's name.
+9. **When you are done:** in Veil click **GPU worker**, then **Forget this worker** (click it twice). Then stop or delete the machine at your provider.
+   Optionally remove it from <https://login.tailscale.com/admin/machines> (the three dots next to it, then **Delete**). Ephemeral machines
+   disappear by themselves after a while.
+
+Tested with: `./install.sh --worker` as root on a clean Ubuntu 24.04 container (processor build; pairing and real jobs worked), and a worker with an
+NVIDIA RTX 3060 listening on its Tailscale address and used by a second Veil on the same computer. It has **not** been tried on a real rented
+machine, with a second physical computer, or in Tailscale's userspace mode; if a step above does not match what you see, please report it.
+
+If something does not work:
+
+| You see | What it means and what to do |
+|---|---|
+| "The worker could not be reached" | The worker is not running, or Tailscale is off at one end. On the worker: is `veil-worker` running, does `tailscale status` show it connected? On your computer: is Tailscale on? Jobs ran on your computer meanwhile. |
+| "... is not a Tailscale address" | The address is a normal network or internet address. Use the one starting with `100.` or the `.ts.net` name. |
+| "That code is not right, or it has expired" | Codes work once, for 10 minutes. Run `veil-worker pair` again. |
+| "The worker no longer trusts this computer" | It was revoked, or its data folder was reset. Pair again. |
+| "This is not the worker that was paired" | A different machine answers at that address (for example a new rental reusing it). Forget the worker and pair again if you trust it. |
+| "The worker is busy" | It runs one job at a time and another is still running; Veil used your computer for this job. |
 
 ## Models and licenses
 

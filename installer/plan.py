@@ -51,6 +51,7 @@ class Choices:
     llm: str = "ollama"            # ollama | online | none
     tailscale: bool = False
     cpu: bool = False
+    worker: bool = False           # set this computer up as a GPU worker for another computer (no language model, Tailscale required)
     models_dir: str = ""
     data_dir: str = ""
 
@@ -101,6 +102,9 @@ def build(hw, reg, choices: Choices, libs_present: bool = False) -> Plan:
     gpu = bool(hw.gpus) and not choices.cpu
     libs = LIBS_GPU if gpu else LIBS_CPU
     missing = [p for p, ok in (("python3-venv", hw.has_venv), ("curl", hw.has_curl)) if not ok]
+    if choices.worker:
+        choices.llm = "none"
+        choices.tailscale = True
     if choices.llm == "ollama" and not hw.has_zstd and not hw.ollama_path:
         missing.append("zstd")
     if missing:
@@ -130,8 +134,8 @@ def build(hw, reg, choices: Choices, libs_present: bool = False) -> Plan:
                                "you already have it, so it is reused" if local else "Ollama checks every part of it", have=bool(local), key=t["llm"]))
     if choices.tailscale and hw.tailscale_state != "running":
         if hw.debian_family or hw.tailscale_path:
-            plan.items.append(Item("tailscale", "Tailscale (phone access)", 0 if hw.tailscale_path else TAILSCALE_SIZE, "BSD-3-Clause", "pkgs.tailscale.com",
-                                   "private network between your computer and phone", have=bool(hw.tailscale_path), need_sudo=not hw.tailscale_path, key="tailscale"))
+            plan.items.append(Item("tailscale", "Tailscale (" + ("worker access" if choices.worker else "phone access") + ")", 0 if hw.tailscale_path else TAILSCALE_SIZE, "BSD-3-Clause", "pkgs.tailscale.com",
+                                   ("the private network your own computer reaches this worker through" if choices.worker else "private network between your computer and phone"), have=bool(hw.tailscale_path), need_sudo=not hw.tailscale_path, key="tailscale"))
         else:
             plan.items.append(Item("tailscale", "Tailscale (you install it yourself)", 0, "BSD-3-Clause", "tailscale.com/download/linux",
                                    "not Debian/Ubuntu/Mint, so the installer shows the steps and you install it", key="tailscale"))

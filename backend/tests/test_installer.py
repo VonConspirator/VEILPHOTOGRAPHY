@@ -24,13 +24,14 @@ reg = plan.load_registry()
 @pytest.fixture(autouse=True)
 def never_touch_the_real_machine(tmp_path, monkeypatch):
     """No test in this file may write to the real home folder or run a real install step (an earlier version of one test did)."""
-    for name, rel in (("RECORD", ".config/veil/install.json"), ("LAUNCHER", ".local/bin/veil"), ("DESKTOP", ".local/share/applications/veil.desktop"),
+    for name, rel in (("RECORD", ".config/veil/install.json"), ("LAUNCHER", ".local/bin/veil"), ("WORKER_LAUNCHER", ".local/bin/veil-worker"), ("DESKTOP", ".local/share/applications/veil.desktop"),
                       ("UNIT", ".config/systemd/user/ollama.service"), ("LOG", ".local/state/veil/install.log")):
         monkeypatch.setattr(system, name, tmp_path / "fakehome" / rel)
     monkeypatch.setattr(system, "OLLAMA_PREFIX", tmp_path / "fakehome" / ".local")
 
     def refuse(*a, **k):
         raise AssertionError("an in-process test tried to run the real install steps")
+    monkeypatch.setattr(cli, "_real_run_steps", cli.run_steps, raising=False)     # only dry runs may use it (see the worker test)
     monkeypatch.setattr(cli, "run_steps", refuse)
 
 
@@ -589,3 +590,70 @@ def test_dry_run_writes_no_settings(tmp_path):
     r, _ = runner(dry_run=True)
     system.write_ai_settings(r, tmp_path / "data", "qwen3.5:2b")
     assert not (tmp_path / "data").exists()
+
+
+# ---------------------------------------------------------------- worker mode (phase 9)
+def worker_choices(**kw):
+    return plan.Choices(tier="Recommended", models_dir="/nonexistent-models", data_dir="/nonexistent-data", worker=True, **kw)
+
+
+def test_worker_plan_has_no_language_model_and_always_has_tailscale():
+    p = plan.build(H(tailscale_state=""), reg, worker_choices(llm="ollama", tailscale=False))
+    kinds = [i.kind for i in p.items]
+    assert "llm" not in kinds and "ollama" not in kinds and "tailscale" in kinds
+    assert p.choices.llm == "none" and p.choices.tailscale
+
+
+def test_worker_plan_skips_zstd_which_only_ollama_needs():
+    p = plan.build(H(has_zstd=False, tailscale_state="running"), reg, worker_choices())
+    assert not [i for i in p.items if i.kind == "system" and "zstd" in i.key]
+
+
+def test_worker_questions_never_ask_about_the_language_model_or_phone(monkeypatch, tmp_path):
+    asked = []
+    monkeypatch.setattr(cli, "ask_choice", lambda q, *a, **k: asked.append(q) or 0)
+    monkeypatch.setattr(cli, "ask_yes_no", lambda q, *a, **k: asked.append(q) or True)
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    args = cli.parser().parse_args(["--worker", "--models-dir", str(tmp_path / "m"), "--data-dir", str(tmp_path / "d"), "--tier", "Minimum"])
+    c = cli.questions(args, H(), reg, tmp_path)
+    assert c.worker and c.llm == "none" and c.tailscale
+    assert not [q for q in asked if "typed" in q.lower() or "Ollama" in q or "phone" in q.lower()]
+
+
+def test_the_worker_launcher_runs_the_worker_and_nothing_else(tmp_path):
+    text = system.worker_launcher_text(Path("/v/.venv"), Path("/m dir"), Path("/d"))
+    assert "-m veil.worker" in text and "exec /v/.venv/bin/python -I" in text and "'/m dir'" in text
+    assert "ollama" not in text.lower() and " -m veil " not in text
+
+
+def test_worker_dry_run_as_root_on_a_rented_machine(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(hw, "detect", lambda target, run=None: H(is_root=True, tailscale_state=""))
+    monkeypatch.setattr(system, "libs_ready", lambda py: False)
+    monkeypatch.setattr(cli, "run_steps", cli._real_run_steps)           # a DRY run only: it prints and changes nothing
+    rc = cli.main(["--worker", "--dry-run", "--yes", "--tier", "Recommended", "--models-dir", str(tmp_path / "m"), "--data-dir", str(tmp_path / "d")])
+    out = capsys.readouterr().out
+    assert rc == 0 and "GPU worker mode" in out and "normal on a rented GPU machine" in out
+    assert "Ollama" not in out.split("Everything this will download")[1].split("Download total")[0]
+    assert "tailscale up --auth-key" in out and "userspace-networking" in out and "tailscale serve --bg --tcp 5196" in out
+    assert "veil-worker" in out and not (tmp_path / "m").exists()
+
+
+def test_normal_install_still_refuses_root_without_yes(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(hw, "detect", lambda target, run=None: H(is_root=True))
+    assert cli.main(["--dry-run", "--tier", "Minimum", "--models-dir", str(tmp_path / "m"), "--data-dir", str(tmp_path / "d")]) == 2
+    assert "administrator (root)" in capsys.readouterr().out
+
+
+def test_worker_install_does_not_overwrite_the_veil_command_or_record(tmp_path, monkeypatch):
+    r = system.Runner(dry_run=False, assume_yes=True, is_root=False, say=lambda *a, **k: None)
+    system.write_record(r, {"launcher": "/x/veil", "venv": "/x/v", "data_dir": "/x/d"})
+    system.write_record(r, {"worker_launcher": "/x/veil-worker", "venv": "/x/v"})
+    rec = system.read_record()
+    assert rec["launcher"] == "/x/veil" and rec["worker_launcher"] == "/x/veil-worker"
+
+
+def test_uninstall_lists_the_worker_command(tmp_path, capsys):
+    r = system.Runner(dry_run=False, assume_yes=True, say=lambda *a, **k: None)
+    system.write_record(r, {"venv": str(tmp_path / "v"), "worker_launcher": str(tmp_path / "bin" / "veil-worker"), "data_dir": str(tmp_path / "data")})
+    assert cli.main(["--uninstall", "--dry-run"]) == 0
+    assert "veil-worker" in capsys.readouterr().out

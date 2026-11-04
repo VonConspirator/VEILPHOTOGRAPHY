@@ -30,15 +30,16 @@ async function api(path, opts = {}) {
     if (remote && (res.status === 401 || res.status === 403) && !path.startsWith('/api/pair')) boot().catch(() => {});
     throw err;
   }
+  if (/\/(segment|faces|edit)$/.test(path)) setTimeout(workerNote, 0);
   return res;
 }
 const postJSON = (path, body) => api(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 
 let toastTimer = 0;
-function toast(msg, bad = false) {
+function toast(msg, bad = false, ms = 4000) {
   const t = $('#toast');
   t.textContent = msg; t.classList.toggle('bad', bad); t.hidden = false;
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 4000);
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, ms);
 }
 const fail = (e) => toast(e.message || 'Something went wrong.', true);
 
@@ -60,7 +61,7 @@ async function boot() {
   if (res.status === 403) { remote = true; return showUnpaired('Phone access is off', 'Phone access is switched off on your computer. Turn on "Allow phone access" in Veil\'s Phone window, then check again.', false); }
   const st = await res.json();
   remote = st.scope === 'remote';
-  $('#btn-phone').hidden = remote; $('#btn-wm').hidden = remote;      // watermarks are made at the computer
+  $('#btn-phone').hidden = remote; $('#btn-wm').hidden = remote; $('#btn-worker').hidden = remote;      // watermarks are made at the computer
   $('#btn-logout').textContent = remote ? 'Unpair this phone' : 'Log out';
   if (remote && !st.logged_in) {
     if (st.device_state === 'pending') {
@@ -78,7 +79,7 @@ async function boot() {
   }
   show('#screen-app');
   if (!remote) pollPhoneBadge();
-  loadAI(); loadVision();
+  loadAI(); loadVision(); workerInit();
   await loadLibrary(true);
 }
 $('#btn-unpaired-retry').addEventListener('click', () => boot().catch(fail));
@@ -907,8 +908,8 @@ $('#blur-amount').addEventListener('input', () => { $('#out-blur').textContent =
 // ---------------------------------------------------------------- faces and looks (phase 6)
 function clearFaces() { S.faces = { list: [], found: false }; if (typeof renderFaces === 'function') renderFaces(); }
 function renderFaces() {
-  const v = S.vision, libs = !!v && v.faces_libs && v.models.filter((m) => ['yunet', 'face-landmarker'].includes(m.name)).every((m) => m.installed);
-  const gen = !!v && v.generative_libs && v.models.some((m) => m.name === 'sdxl-inpaint' && m.installed);
+  const v = S.vision, libs = !!v && !!v.faces_available;
+  const gen = !!v && !!v.generative_available;
   const has = !!S.photo, n = S.faces.list.filter((f) => f.on).length;
   $('#faces-status').textContent = !v ? '' : !libs ? 'The face models are not installed yet.' + (remote ? '' : ' Open Model, then Editing models.')
     : !S.faces.found ? 'Click Find faces, then tick the faces an edit should change.'
@@ -1169,3 +1170,61 @@ $('#btn-ai-test').addEventListener('click', async () => {
 
 // ---------------------------------------------------------------- start
 buildSliders(); setTool('view'); boot().catch(fail);
+
+
+// ---------------------------------------------------------------- GPU worker (owner at the computer) and "where did that job run"
+let workerSeen = 0;
+async function workerInit() { try { workerSeen = ((await (await fetch('/api/worker', { credentials: 'same-origin' })).json()).last || {}).seq || 0; } catch (_) { /* optional */ } }
+async function workerNote() {
+  try {
+    const d = await (await fetch('/api/worker', { credentials: 'same-origin' })).json();
+    const l = d.last || {};
+    if (!l.seq || l.seq === workerSeen) return;
+    workerSeen = l.seq;
+    const where = $('#job-where');
+    if (l.fallback) {
+      where.textContent = 'Ran on this computer (worker unavailable)'; where.hidden = false;
+      toast('GPU worker: ' + l.reason, true, 9000);
+    } else if (l.where === 'worker') {
+      where.textContent = 'Ran on ' + l.worker; where.hidden = false;
+    } else { where.hidden = true; }
+  } catch (_) { /* a note is optional */ }
+}
+function workerError(msg) { $('#worker-error').textContent = msg || ''; }
+async function workerCall(path, method = 'POST', body) {
+  const opts = { method, headers: {} };
+  if (body !== undefined) { opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body); }
+  try { const res = await api(path, opts); workerError(''); return await res.json(); } catch (ex) { workerError(ex.message); return null; }
+}
+async function workerRefresh() {
+  const d = await workerCall('/api/worker', 'GET'); if (!d) return;
+  const st = $('#worker-state');
+  $('#worker-pair').hidden = d.configured; $('#worker-manage').hidden = !d.configured;
+  $('#worker-enabled').checked = d.enabled;
+  if (!d.configured) { st.className = 'hint'; st.textContent = 'No worker is paired. Jobs run on this computer.'; return; }
+  if (!d.enabled) { st.className = 'hint'; st.textContent = `${d.name} is paired but switched off. Jobs run on this computer.`; return; }
+  if (d.reachable) {
+    const caps = Object.entries(d.capabilities || {}).filter(([, v]) => v).map(([k]) => k).join(', ') || 'nothing set up yet';
+    st.className = 'ok'; st.textContent = `Connected to ${d.name}${d.gpu ? ` (${d.gpu}, ${d.vram_gb} GB)` : ' (no graphics card: it will be slow)'}. Does: ${caps}.`;
+  } else { st.className = 'warn'; st.textContent = `${d.name} cannot be reached: ${d.problem} Jobs run on this computer meanwhile.`; }
+}
+$('#btn-worker').addEventListener('click', () => { $('#worker-dialog').hidden = false; workerError(''); workerRefresh(); });
+$('#btn-worker-close').addEventListener('click', () => { $('#worker-dialog').hidden = true; $('#worker-code').value = ''; });
+$('#worker-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const d = await workerCall('/api/worker/pair', 'POST', { address: $('#worker-address').value, code: $('#worker-code').value });
+  $('#worker-code').value = '';
+  if (d) { toast(`Paired with ${d.name}.`); await workerRefresh(); visionRefresh().catch(() => {}); }
+});
+$('#worker-enabled').addEventListener('change', async (e) => { await workerCall('/api/worker/enable', 'POST', { enabled: e.target.checked }); workerRefresh(); });
+$('#btn-worker-test').addEventListener('click', async () => {
+  const d = await workerCall('/api/worker/test'); if (d) toast(`Worker answered: ${d.name}${d.gpu ? ', ' + d.gpu : ''}.`);
+  workerRefresh();
+});
+let forgetArmed = 0;
+$('#btn-worker-forget').addEventListener('click', async (e) => {
+  const b = e.currentTarget;
+  if (!forgetArmed) { forgetArmed = setTimeout(() => { forgetArmed = 0; b.textContent = 'Forget this worker'; }, 3000); b.textContent = 'Sure?'; return; }
+  clearTimeout(forgetArmed); forgetArmed = 0; b.textContent = 'Forget this worker';
+  await workerCall('/api/worker', 'DELETE'); workerRefresh();
+});
