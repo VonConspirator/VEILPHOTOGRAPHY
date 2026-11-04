@@ -81,7 +81,9 @@ async function boot() {
   if (!remote) pollPhoneBadge();
   loadAI(); loadVision(); workerInit();
   await loadLibrary(true);
+  veilTutorial.maybe(remote);          // the first time only (skipped or finished = not again)
 }
+$('#btn-help').addEventListener('click', () => veilTutorial.replay(remote));
 $('#btn-unpaired-retry').addEventListener('click', () => boot().catch(fail));
 
 function wireForm(sel, url) {

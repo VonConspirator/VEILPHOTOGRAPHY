@@ -72,6 +72,12 @@ signing in on the computer and on the phone, step by step. It never types passwo
 versions are not pinned to hashes in this version. Language models are checked by Ollama itself. Everything else is pinned in
 `backend/veil/vision/registry.py`.
 
+## First launch tutorial
+
+The first time you open the editor, a short tour explains every tool and walks through phone and tablet setup over Tailscale. **Skip tutorial** (or Esc)
+ends it, and once it is skipped or finished it does not appear again by itself. The **Help** button replays it, with a menu to jump to any step.
+It is remembered in that browser only, makes no network requests, and a paired phone gets a shorter version.
+
 ## GPU worker (optional)
 
 A GPU worker is a second computer with a strong NVIDIA card, at home or rented by the hour, that does Veil's heavy picture jobs
