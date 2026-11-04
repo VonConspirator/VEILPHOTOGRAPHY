@@ -27,7 +27,7 @@ class Fake:
         self.reply_text = json.dumps(PLAN)
         self.status = 200
         self.thinking_only = False
-        self.models = ["qwen3-vl:8b", "llama3.2:latest"]
+        self.models = ["qwen3.5:9b", "llama3.2:latest"]
         fake = self
 
         class H(BaseHTTPRequestHandler):
@@ -362,9 +362,9 @@ def test_an_unreachable_model_says_so(ai):
 # ---------------------------------------------------------------- model manager
 def test_model_list_shows_installed_models_against_the_tiers(ai):
     m = ai.c.get("/api/ai/models").json()
-    assert m["reachable"] and "qwen3-vl:8b" in m["installed"] and m["can_download"] is True
+    assert m["reachable"] and "qwen3.5:9b" in m["installed"] and m["can_download"] is True
     tiers = {t["tier"]: t for t in m["tiers"]}
-    assert tiers["Recommended"]["name"] == "qwen3-vl:8b" and tiers["Recommended"]["installed"] is True
+    assert tiers["Recommended"]["name"] == "qwen3.5:9b" and tiers["Recommended"]["installed"] is True
     assert tiers["Minimum"]["installed"] is False
     assert all(t["license"] == "Apache-2.0" for t in m["tiers"])
 
@@ -391,3 +391,8 @@ def test_a_listed_model_downloads_through_ollama_with_progress(ai):
     assert d["running"] is False and d["error"] == ""
     pulls = [q for q in ai.fake.requests if q.path == "/api/pull"]
     assert len(pulls) == 1 and pulls[0].body["model"] == "qwen3-vl:2b"
+
+
+def test_a_fresh_install_defaults_to_qwen35_9b(ready):
+    a = ready.get("/api/ai").json()["active"]
+    assert a["model"] == "qwen3.5:9b" and a["local"] is True and a["vision"] is True

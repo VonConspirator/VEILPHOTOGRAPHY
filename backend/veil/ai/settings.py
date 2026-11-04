@@ -11,7 +11,7 @@ from pathlib import Path
 from .providers import KINDS, AIError, is_local_url
 
 DEFAULT = {"id": "local-ollama", "name": "Ollama (this computer)", "kind": "ollama",
-           "base_url": "http://127.0.0.1:11434", "model": "qwen3-vl:8b", "vision": True}
+           "base_url": "http://127.0.0.1:11434", "model": "qwen3.5:9b", "vision": True}
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9\-]{0,31}$")
 MAX_PROVIDERS = 12
 
