@@ -1,13 +1,13 @@
 # Hash-checked library lists
 
-Every Python library Veil installs is pinned here to an exact version and to the SHA-256 of each file pip may install.
+Every Python library Veil installs is pinned here (one folder per supported Python: `py310`, `py311`, `py312`) to an exact version and to the SHA-256 of each file pip may install.
 
 | File | What it is |
 |---|---|
-| `py312/gpu.lock` | NVIDIA build (PyTorch with CUDA from PyPI, OpenCV, MediaPipe, SAM 2.1 dependencies, web server) |
-| `py312/gpu-sdxl.lock` | the same plus diffusers, transformers and accelerate for generative fill |
-| `py312/cpu.lock` | processor-only build (PyTorch `+cpu` from download.pytorch.org, no CUDA packages) |
-| `py312/source.lock` | `sam2`, `iopath`, `antlr4-python3-runtime`: published only as source, installed second from hash-checked source |
+| `py3NN/gpu.lock` | NVIDIA build (PyTorch with CUDA from PyPI, OpenCV, MediaPipe, SAM 2.1 dependencies, web server) |
+| `py3NN/gpu-sdxl.lock` | the same plus diffusers, transformers and accelerate for generative fill |
+| `py3NN/cpu.lock` | processor-only build (PyTorch `+cpu` from download.pytorch.org, no CUDA packages) |
+| `py3NN/source.lock` | `sam2`, `iopath`, `antlr4-python3-runtime`: published only as source, installed second from hash-checked source |
 | `MANIFEST.json` | which Python versions have lists |
 | `make_lock.py` | regenerates the lists |
 
@@ -23,5 +23,5 @@ with a one-line `.pth` file. Only wheels for 64-bit Linux (glibc) and pure-Pytho
 3. `pytest backend/tests/test_lock.py` (shape, coverage and enforcement), then try an install on a clean machine or container.
 4. Review the diff: a changed version or an unexpected new package is visible line by line.
 
-To support another Python (say 3.13), run `make_lock.py` with that Python inside an environment built for it; it adds `py313/` to the manifest.
+To support another Python (say 3.13), build an environment for it, run the whole test suite there, then run `make_lock.py` with that Python; it adds `py313/` to the manifest. Each list accepts only wheels for its own Python, so run it once per version.
 Pins are exact on purpose: there is no automatic upgrade path.

@@ -15,8 +15,14 @@ sys.path.insert(0, str(ROOT / "lock"))
 from installer import plan, system  # noqa: E402
 import make_lock  # noqa: E402
 
-LOCK = ROOT / "lock" / "py312"
+MINOR = sys.version_info[1]
+LOCK = ROOT / "lock" / f"py3{MINOR}"
 MANIFEST = json.loads((ROOT / "lock" / "MANIFEST.json").read_text())
+try:
+    import tomllib
+except ImportError:                                     # Python 3.10
+    import tomli as tomllib
+needs_lock = pytest.mark.skipif(f"3.{MINOR}" not in MANIFEST["pythons"], reason="no lock for this Python")
 
 
 def entries(path: Path) -> dict[str, tuple[str, list[str]]]:
@@ -41,13 +47,21 @@ def entries(path: Path) -> dict[str, tuple[str, list[str]]]:
 
 
 def test_the_manifest_matches_the_files():
-    e = MANIFEST["pythons"]["3.12"]
-    assert MANIFEST["platform"] == "linux-x86_64" and set(e["files"]) == {"gpu.lock", "gpu-sdxl.lock", "cpu.lock", "source.lock"}
-    assert all((ROOT / "lock" / e["dir"] / f).is_file() for f in e["files"])
+    assert MANIFEST["platform"] == "linux-x86_64" and set(MANIFEST["pythons"]) >= {"3.12"}
+    for ver, e in MANIFEST["pythons"].items():
+        assert e["dir"] == "py3" + ver.split(".")[1] and set(e["files"]) == {"gpu.lock", "gpu-sdxl.lock", "cpu.lock", "source.lock"}
+        assert all((ROOT / "lock" / e["dir"] / f).is_file() for f in e["files"]), ver
 
 
+def test_every_locked_python_has_all_four_lists_with_the_same_source_packages():
+    srcs = {v: set(entries(ROOT / "lock" / e["dir"] / "source.lock")) for v, e in MANIFEST["pythons"].items()}
+    assert all(s == {"sam2", "iopath", "antlr4-python3-runtime"} for s in srcs.values()), srcs
+
+
+@pytest.mark.parametrize("ver", sorted(MANIFEST["pythons"]))
 @pytest.mark.parametrize("name", ["gpu.lock", "gpu-sdxl.lock", "cpu.lock", "source.lock"])
-def test_every_line_is_an_exact_version_with_at_least_one_sha256(name):
+def test_every_line_is_an_exact_version_with_at_least_one_sha256(name, ver):
+    LOCK = ROOT / "lock" / MANIFEST["pythons"][ver]["dir"]
     e = entries(LOCK / name)
     assert e
     for pkg, (ver, hashes) in e.items():
@@ -59,9 +73,9 @@ def test_every_line_is_an_exact_version_with_at_least_one_sha256(name):
     assert not re.search(r"^--extra-index-url (?!https://pypi\.org/simple$)", text, re.M)
 
 
+@needs_lock
 def test_the_lists_cover_everything_veil_needs():
     gpu, sdxl, cpu, src = (entries(LOCK / n) for n in ("gpu.lock", "gpu-sdxl.lock", "cpu.lock", "source.lock"))
-    import tomllib
     proj = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
     wanted = set()
     for spec in proj["dependencies"] + proj["optional-dependencies"]["editing"] + proj["optional-dependencies"]["faces"]:
@@ -75,6 +89,7 @@ def test_the_lists_cover_everything_veil_needs():
     assert "setuptools" in gpu and "setuptools" in cpu             # the source-only libraries are built with it, never with a download
 
 
+@needs_lock
 def test_source_only_packages_are_separate_and_not_in_the_other_lists():
     src = entries(LOCK / "source.lock")
     assert set(src) == {"sam2", "iopath", "antlr4-python3-runtime"}
@@ -82,9 +97,10 @@ def test_source_only_packages_are_separate_and_not_in_the_other_lists():
         assert not set(src) & set(entries(LOCK / n))
 
 
+@needs_lock
 def test_gpu_and_cpu_builds_differ_where_they_must():
     gpu, cpu = entries(LOCK / "gpu.lock"), entries(LOCK / "cpu.lock")
-    assert gpu["torch"][0] == "2.15.0" and cpu["torch"][0] == "2.15.0+cpu" and cpu["torchvision"][0].endswith("+cpu")
+    assert gpu["torch"][0] == MANIFEST["pythons"][f"3.{MINOR}"]["torch"] and cpu["torch"][0] == gpu["torch"][0] + "+cpu" and cpu["torchvision"][0].endswith("+cpu")
     assert any(n.startswith("nvidia-") for n in gpu) and "triton" in gpu
     assert not any(n.startswith(("nvidia-", "cuda-")) or n == "triton" for n in cpu)
     assert "--index-url https://download.pytorch.org/whl/cpu" in (LOCK / "cpu.lock").read_text()
@@ -99,21 +115,25 @@ def test_only_64_bit_linux_and_pure_python_files_are_accepted():
     assert ok("six-1.16.0-py2.py3-none-any.whl", 12) and ok("idna-3.7-py3-none-any.whl", 12)
     assert ok("cryptography-45-cp311-abi3-manylinux_2_28_x86_64.whl", 12)
     assert ok("torch-2.15.0+cpu-cp312-cp312-manylinux_2_28_x86_64.whl", 12)
+    assert ok("numpy-2.2.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", 11) and not ok("numpy-2.2.0-cp312-cp312-manylinux_2_17_x86_64.whl", 11)
+    assert not ok("numpy-2.5.4-cp313-cp313-manylinux_2_28_x86_64.whl", 12) and not ok("cryptography-45-cp313-abi3-manylinux_2_28_x86_64.whl", 12)
     for bad in ("numpy-2.5.4-cp312-cp312-macosx_11_0_arm64.whl", "numpy-2.5.4-cp312-cp312-win_amd64.whl", "numpy-2.5.4-cp312-cp312-manylinux_2_28_aarch64.whl",
                 "numpy-2.5.4-cp312-cp312-musllinux_1_2_x86_64.whl", "numpy-2.5.4-cp311-cp311-manylinux_2_28_x86_64.whl", "numpy-2.5.4-pp310-pypy310_pp73-manylinux_2_28_x86_64.whl",
                 "numpy-2.5.4-cp312-cp312-linux_aarch64.whl", "old-1.0-py2-none-any.whl", "numpy-2.5.4.tar.gz", "not-a-wheel.whl"):
         assert not ok(bad, 12), bad
 
 
+@needs_lock
 def test_the_pinned_versions_are_exactly_what_the_tests_ran_with():
     """The lock was made from this environment, so this environment must match the NVIDIA list (a stale lock fails here)."""
     mism = system.lock_mismatches(Path(sys.executable), LOCK / "gpu-sdxl.lock")
     assert mism == [], mism
 
 
+@needs_lock
 def test_a_mismatch_is_reported_by_name():
     mism = system.lock_mismatches(Path(sys.executable), LOCK / "cpu.lock")
-    assert any(m.startswith("torch:") and "2.15.0+cpu" in m for m in mism)
+    assert any(m.startswith("torch:") and "+cpu" in m for m in mism)
 
 
 # ---------------------------------------------------------------- the installer makes pip enforce them
@@ -145,8 +165,8 @@ def test_the_installer_asks_pip_to_require_hashes(cpu, sdxl, lockname, tmp_path)
 
 
 def test_a_python_without_a_list_stops_with_a_plain_message(tmp_path):
-    with pytest.raises(system.StepError, match="no hash-checked library list for Python 3.10") as e:
-        system.install_libs(Cap(), Path("/v/bin/python"), tmp_path, cpu=False, sdxl=False, minor=10)
+    with pytest.raises(system.StepError, match="no hash-checked library list for Python 3.9") as e:
+        system.install_libs(Cap(), Path("/v/bin/python"), tmp_path, cpu=False, sdxl=False, minor=9)
     assert "--unlocked" in str(e.value) and "3.12" in str(e.value)
 
 
@@ -181,6 +201,13 @@ def _wheel(path: Path, name="veillocktest", version="1.0") -> bytes:
     return data
 
 
+def _have_pip():
+    return subprocess.run([sys.executable, "-m", "pip", "--version"], capture_output=True).returncode == 0
+
+
+needs_pip = pytest.mark.skipif(not _have_pip(), reason="this environment has no pip")
+
+
 def _pip_with_installers_flags(tmp_path, req_text):
     """Runs the installer's own flags (taken from install_libs) with real pip, against a local folder instead of the internet."""
     import hashlib
@@ -194,6 +221,7 @@ def _pip_with_installers_flags(tmp_path, req_text):
                           capture_output=True, text=True), target
 
 
+@needs_pip
 def test_pip_installs_a_file_with_the_right_hash_and_refuses_a_changed_one(tmp_path):
     import hashlib
     data = _wheel(tmp_path)
@@ -216,6 +244,7 @@ def _write(p: Path, text: str) -> Path:
     return p
 
 
+@needs_pip
 def test_pip_refuses_a_line_with_no_hash_at_all(tmp_path):
     _wheel(tmp_path)
     res, target = _pip_with_installers_flags(tmp_path, "veillocktest==1.0\n")

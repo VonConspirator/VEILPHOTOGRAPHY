@@ -1,0 +1,13 @@
+# Written by lock/make_lock.py on 2026-11-04 for CPython 3.10 on 64-bit Linux (glibc). Do not edit by hand.
+# Install with:  pip install --require-hashes --no-deps -r <this file>   (pip refuses any file whose SHA-256 is not listed here)
+# Source-only packages. Install AFTER the other lock, with:
+# pip install --require-hashes --no-deps --no-build-isolation -r source.lock
+
+antlr4-python3-runtime==4.9.3 \
+    --hash=sha256:f224469b4168294902bb1efa80a8bf7855f24c99aef99cbefc1bcd3cce77881b
+
+iopath==0.1.10 \
+    --hash=sha256:3311c16a4d9137223e20f141655759933e1eda24f8bff166af834af3c645ef01
+
+sam2==1.1.0 \
+    --hash=sha256:7e0ea252d43c10d853e3acfce0b5770ac683c30481bd6de311300e9d44f45b74

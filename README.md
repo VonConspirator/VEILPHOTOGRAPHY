@@ -81,7 +81,7 @@ download with the weights recorded in Veil and tells you if it is a newer build.
 signing in on the computer and on the phone, step by step. It never types passwords or signs in for you.
 
 **Python libraries are hash-checked too.** The libraries are installed from lists in `lock/` that pin every package to an exact version and to the
-SHA-256 of every file that may be installed (64-bit Linux, CPython 3.12): `gpu.lock` (NVIDIA), `gpu-sdxl.lock` (with generative fill) and `cpu.lock`
+SHA-256 of every file that may be installed (64-bit Linux, for your Python): `gpu.lock` (NVIDIA), `gpu-sdxl.lock` (with generative fill) and `cpu.lock`
 (processor-only). The installer runs `pip install --require-hashes --no-deps --only-binary=:all:` on them, so pip refuses any file whose SHA-256 is not listed
 (a swapped, tampered or newer-than-tested file is refused, not installed). Three small packages that exist only as source (`sam2`, `iopath`,
 `antlr4-python3-runtime`) are built from hash-checked source in a second step, with the build tools from the first list and no network for build
@@ -90,9 +90,10 @@ dependencies. When the install finishes it compares every installed library with
 Hash-checking proves a file is the one that was listed, not that its publisher is trustworthy: you are still trusting PyTorch, NVIDIA and the other
 projects listed in the licenses section.
 
-**Other Python versions.** The lists cover Python 3.12, the default on Ubuntu 24.04 and Linux Mint 22. On another Python (for example 3.10 on Ubuntu 22.04)
-the installer stops and says so. `./install.sh --unlocked` installs the newest compatible libraries without hash-checking; it prints a warning, and
-nothing in that case is verified beyond what pip's index offers.
+**Python versions.** There are lists for Python 3.10, 3.11 and 3.12 (`lock/py310`, `py311`, `py312`), each made from the library versions the full test suite
+passed with on that Python, and each accepting only files built for it. On another Python the installer stops and says so;
+`./install.sh --unlocked` installs the newest compatible libraries without hash-checking, prints a warning, and nothing in that case is verified beyond
+what pip's index offers. The libraries differ between Python versions (for example PyTorch 2.14 on 3.10 and 2.15 on 3.12).
 
 **What else is checked.** Language models are checked by Ollama itself. Every model file is pinned in `backend/veil/vision/registry.py` by size and SHA-256.
 The SAM 2.1 tiny and large checksums were recorded when first downloaded, because Meta publishes none.

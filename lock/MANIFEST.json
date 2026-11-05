@@ -12,6 +12,28 @@
     "cpu.lock",
     "source.lock"
    ]
+  },
+  "3.10": {
+   "dir": "py310",
+   "generated": "2026-11-04",
+   "torch": "2.14.1",
+   "files": [
+    "gpu.lock",
+    "gpu-sdxl.lock",
+    "cpu.lock",
+    "source.lock"
+   ]
+  },
+  "3.11": {
+   "dir": "py311",
+   "generated": "2026-11-04",
+   "torch": "2.15.0",
+   "files": [
+    "gpu.lock",
+    "gpu-sdxl.lock",
+    "cpu.lock",
+    "source.lock"
+   ]
   }
  }
 }

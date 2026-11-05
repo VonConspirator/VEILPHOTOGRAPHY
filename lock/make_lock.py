@@ -24,7 +24,10 @@ import importlib.metadata as md
 import json
 import re
 import sys
-import tomllib
+try:
+    import tomllib
+except ImportError:                            # Python 3.10
+    import tomli as tomllib
 import urllib.request
 from pathlib import Path
 
@@ -34,7 +37,6 @@ from packaging.utils import canonicalize_name, parse_wheel_filename
 
 ROOT = Path(__file__).resolve().parent.parent
 PY = sys.version_info[:2]
-PY_MAX = 14                                    # newest CPython minor whose wheels are accepted
 EXCLUDE = {"opencv-contrib-python"}            # mediapipe asks for it; Veil uses opencv-python-headless and installs mediapipe without its dependencies
 CPU_DROP = ("nvidia-", "cuda-", "triton")      # CUDA pieces: not part of the processor-only build
 TORCH_CPU_INDEX = "https://download.pytorch.org/whl/cpu"
@@ -91,28 +93,29 @@ def lower_bound(spec: str) -> tuple[int, int]:
     return (3, 0)
 
 
-def wheel_ok(filename: str, pymin: int) -> bool:
-    """A 64-bit Linux (glibc) wheel for CPython 3.<pymin>..3.<PY_MAX>, or a pure-Python wheel."""
+def wheel_ok(filename: str, target: int) -> bool:
+    """A 64-bit Linux (glibc) wheel that CPython 3.<target> can use, or a pure-Python wheel. Wheels for other Python versions are not listed."""
     try:
         _, _, _, tags = parse_wheel_filename(filename)
     except Exception:
         return False
     for t in tags:
-        plat_ok = t.platform == "any" or (re.match(r"^(manylinux\w*|linux)_x86_64$", t.platform) is not None) or \
+        plat_ok = t.platform == "any" or re.match(r"^(manylinux\w*|linux)_x86_64$", t.platform) is not None or \
             (t.platform.startswith("manylinux") and t.platform.endswith("_x86_64"))
         if not plat_ok:
             continue
         i = t.interpreter
-        if i in ("py3", "py2.py3") or i == "py30":
+        if i in ("py3", "py2.py3", "py30"):
             return True
-        m = re.match(r"^(?:cp|py)3(\d+)$", i)
-        if m and (i.startswith("py") or t.abi in ("abi3", "none") or t.abi == i):
-            minor = int(m.group(1))
-            if i.startswith("py") or t.abi == "abi3":
-                if minor <= PY_MAX:
-                    return True
-            elif pymin <= minor <= PY_MAX:
+        m = re.match(r"^(cp|py)3(\d+)$", i)
+        if not m:
+            continue
+        minor = int(m.group(2))
+        if m.group(1) == "py" or t.abi == "abi3":
+            if minor <= target:                      # a stable-ABI or pure wheel built for this Python or an older one
                 return True
+        elif minor == target and t.abi in (i, "none"):
+            return True
     return False
 
 
