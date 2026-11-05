@@ -26,7 +26,7 @@ All pictures here use a synthetic (AI-generated) portrait made for testing; no r
 Veil runs on Linux (64-bit Intel/AMD). The installer works on a computer that has never had Veil on it.
 
 ```
-git clone <this repository> veil-studio
+git clone https://github.com/VonConspirator/VEILPHOTOGRAPHY veil-studio
 cd veil-studio
 ./install.sh --dry-run     # shows everything it would download or install, and changes nothing
 ./install.sh               # asks a few questions, shows each download with its size and license, then installs
@@ -152,7 +152,7 @@ provider steps are described by what to look for. **You pay for the machine whil
    when it goes offline). Leave **Reusable** off. Set the expiry to 1 day. Click **Generate key**, copy the key (it starts with `tskey-`) and keep it
    private: treat it like a password. You will not see it again.
 2. **Rent the machine.** At your provider choose a GPU, the Ubuntu image, and at least 40 GB of disk. Start it, then open its terminal.
-3. **Get Veil onto it.** In that terminal: `git clone <the Veil repository address> veil-studio` and `cd veil-studio`.
+3. **Get Veil onto it.** In that terminal: `git clone https://github.com/VonConspirator/VEILPHOTOGRAPHY veil-studio` and `cd veil-studio`.
    (If the machine has no `git`: `apt-get update && apt-get install -y git`, or copy the folder with `scp`.)
 4. **Install the worker:** `./install.sh --worker`. On rented machines you are usually `root`; the installer says so and runs its administrator
    steps directly. Press Enter to accept the recommended set (it reads the card's memory), or pick another. Wait for it to finish; the models
